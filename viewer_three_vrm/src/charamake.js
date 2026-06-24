@@ -334,6 +334,19 @@ function selectObject(id) {
 
 function clearAllObjects() {
   transformControls.detach();
+  // dispose hair parts first (before deepDispose removes them via the main scene)
+  if (currentRoot) {
+    const hairParts = currentRoot.userData._hairParts;
+    if (hairParts && hairParts.length > 0) {
+      hairParts.forEach(hairRoot => {
+        currentRoot.remove(hairRoot);
+        const hairVrm = hairRoot.userData._hairVrm;
+        if (hairVrm) { VRMUtils.deepDispose(hairVrm.scene); }
+        else { hairRoot.traverse(obj => { obj.geometry?.dispose(); [].concat(obj.material || []).forEach(m => m?.dispose?.()); }); }
+      });
+      currentRoot.userData._hairParts = [];
+    }
+  }
   sceneObjects.forEach(o => {
     scene.remove(o.root);
     if (o.mixer) { o.mixer.stopAllAction(); o.mixer.uncacheRoot(o.root); }
@@ -5555,10 +5568,15 @@ function removeCurrentHairParts() {
   if (!parts || parts.length === 0) return;
   parts.forEach(hairRoot => {
     currentRoot.remove(hairRoot);
-    hairRoot.traverse(obj => {
-      obj.geometry?.dispose();
-      [].concat(obj.material || []).forEach(m => m?.dispose?.());
-    });
+    const hairVrm = hairRoot.userData._hairVrm;
+    if (hairVrm) {
+      VRMUtils.deepDispose(hairVrm.scene);
+    } else {
+      hairRoot.traverse(obj => {
+        obj.geometry?.dispose();
+        [].concat(obj.material || []).forEach(m => m?.dispose?.());
+      });
+    }
   });
   currentRoot.userData._hairParts = [];
 }
@@ -5567,9 +5585,11 @@ function removeCurrentHairParts() {
 async function loadHairPart(url) {
   const gltf = await loader.loadAsync(url);
   let root;
-  if (gltf.userData.vrm) {
-    // rotateVRM0 は呼ばない — currentRoot (親) が既に正しい向きを持つため
-    root = gltf.userData.vrm.scene;
+  // VRM参照を保存して後で deepDispose できるようにする
+  // rotateVRM0 は呼ばない — currentRoot の子として追加するため親の回転を継承する
+  const hairVrm = gltf.userData.vrm || null;
+  if (hairVrm) {
+    root = hairVrm.scene;
   } else {
     root = gltf.scene;
   }
@@ -5596,6 +5616,9 @@ async function loadHairPart(url) {
   root.position.set(0, 0, 0);
   root.rotation.set(0, 0, 0);
   root.scale.set(1, 1, 1);
+
+  // VRM参照を保存（removeCurrentHairParts で deepDispose するため）
+  root.userData._hairVrm = hairVrm;
 
   return root;
 }
