@@ -1,0 +1,36 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Build output
+dist/
+.vite/
+
+# Rust / Tauri
+**/src-tauri/target/
+**/src-tauri/gen/
+
+# Large binaries
+*.zip
+*.exe
+*.dmg
+*.AppImage
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+/tmp/
+
+# ComfyUI (外部リポジトリ)
+ComfyUI/
+
+# Godot
+godot/
+addons/godot-vrm/
+
+# Env / secrets
+.env
+.env.*

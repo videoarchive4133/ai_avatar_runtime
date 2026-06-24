@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ' *)",
+      "Bash(grep -v \"^--$\")",
+      "Bash(node -e ' *)",
+      "Bash(pkill -f \"vite.*5173\")",
+      "Bash(DISPLAY=:0 scrot -a 268,75,440,510 /tmp/preview_full.png)",
+      "Bash(node test_api_modal.mjs)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:d[k] for k in ['main','module','exports'] if k in d}, indent=2\\)\\)\")",
+      "Bash(cargo --version)",
+      "Bash(CARGO_TARGET_DIR=/tmp/viewer_three_vrm-tauri-target cargo tauri dev)",
+      "Bash(ulimit -n 65536)",
+      "Read(//proc/484993/fd/**)",
+      "Bash(kill 484993)",
+      "Bash(jobs)",
+      "Bash(kill %1)",
+      "Bash(# Check inotify usage per user *)",
+      "Read(//proc/**)",
+      "Read(//proc/481348/**)",
+      "Bash(awk '{print $1, $2}')",
+      "Bash(awk '{print $2}')",
+      "Bash(grep -v \"\\\\.d$\")",
+      "Bash(lsblk -o NAME,FSTYPE,SIZE,LABEL,MOUNTPOINT)",
+      "Bash(python3 -c \"import UnityPy; print\\(UnityPy.__version__\\)\")",
+      "Bash(pip3 install *)",
+      "Bash(gh repo *)",
+      "Bash(rm -rf .git && git init && git remote add origin https://videoarchive4133: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@github.com/videoarchive4133/ai_avatar_runtime.git && echo \"done\")",
+      "Bash(git reset *)"
+    ],
+    "additionalDirectories": [
+      "/home/k/Desktop/ai_avatar_runtime/.git"
+    ]
+  }
+}

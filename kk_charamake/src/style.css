@@ -1,0 +1,544 @@
+/* ── KoiKatsu スタイル ── */
+:root {
+  --bg: #0a0c12;
+  --panel: #131621;
+  --panel2: #1a1f2e;
+  --border: #2a2f42;
+  --accent: #4a9eff;
+  --accent2: #ff6b9d;
+  --text: #c8cdd8;
+  --text-lo: #5a607a;
+  --text-hi: #ffffff;
+  --tab-h: 38px;
+  --thumb-size: 72px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: 'Meiryo', 'Yu Gothic', sans-serif; font-size: 12px; display: flex; }
+
+/* ── 左パネル ── */
+#left-panel {
+  width: 360px;
+  min-width: 360px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  z-index: 10;
+}
+
+/* キャラヘッダ */
+#chara-header {
+  background: #0d0f18;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+#chara-name-wrap { display: flex; align-items: center; gap: 6px; flex: 1; }
+.chara-label { color: var(--text-lo); font-size: 11px; white-space: nowrap; }
+#chara-name {
+  flex: 1;
+  background: #1e2236;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-hi);
+  padding: 3px 6px;
+  font-size: 12px;
+  outline: none;
+}
+#chara-name:focus { border-color: var(--accent); }
+#header-btns { display: flex; gap: 4px; flex-shrink: 0; }
+.hbtn {
+  padding: 3px 8px;
+  background: #2a2f42;
+  border: 1px solid #3a3f52;
+  border-radius: 3px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11px;
+  transition: background 0.15s;
+}
+.hbtn:hover { background: #3a3f52; color: var(--text-hi); }
+.hbtn.red { background: #3a1a1a; border-color: #5a2a2a; }
+.hbtn.red:hover { background: #5a2020; }
+
+/* メインタブ */
+#main-tabs {
+  display: flex;
+  background: #0d0f18;
+  border-bottom: 2px solid var(--border);
+  flex-shrink: 0;
+}
+.main-tab {
+  flex: 1;
+  height: var(--tab-h);
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  color: var(--text-lo);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  transition: all 0.15s;
+  padding: 0 4px;
+}
+.main-tab:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+.main-tab.active { color: var(--accent); border-bottom-color: var(--accent); background: rgba(74,158,255,0.06); }
+
+/* サブタブ */
+#sub-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  background: #0f1120;
+  border-bottom: 1px solid var(--border);
+  padding: 4px 6px;
+  gap: 4px;
+  flex-shrink: 0;
+  min-height: 34px;
+}
+.sub-tab {
+  padding: 3px 10px;
+  background: #1e2236;
+  border: 1px solid #2a3050;
+  border-radius: 3px;
+  color: var(--text-lo);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.sub-tab:hover { background: #2a3050; color: var(--text); }
+.sub-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* コンテンツエリア */
+#content-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: #2a3050 transparent;
+}
+#content-area::-webkit-scrollbar { width: 5px; }
+#content-area::-webkit-scrollbar-thumb { background: #2a3050; border-radius: 3px; }
+
+/* サムネイルグリッド */
+.thumb-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 4px 0;
+}
+.thumb-item {
+  position: relative;
+  cursor: pointer;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  background: #1a1f2e;
+  aspect-ratio: 1;
+  transition: border-color 0.15s;
+}
+.thumb-item:hover { border-color: #3a4060; }
+.thumb-item.selected { border-color: var(--accent); }
+.thumb-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  image-rendering: pixelated;
+}
+.thumb-item .thumb-label {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0,0,0,0.7);
+  color: #ccc;
+  font-size: 9px;
+  text-align: center;
+  padding: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.thumb-item:hover .thumb-label { opacity: 1; }
+
+/* なしアイテム */
+.thumb-none {
+  background: #101520;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #3a4060;
+  font-size: 20px;
+}
+
+/* スライダーパネル */
+.slider-panel { padding: 4px 0; }
+.slider-group { margin-bottom: 12px; }
+.slider-group-label {
+  font-size: 10px;
+  color: var(--text-lo);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.sl-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+.sl-name {
+  width: 70px;
+  font-size: 11px;
+  color: var(--text);
+  flex-shrink: 0;
+  text-align: right;
+}
+.sl-row input[type=range] {
+  flex: 1;
+  accent-color: var(--accent);
+  height: 4px;
+}
+.sl-val {
+  width: 30px;
+  text-align: right;
+  font-size: 10px;
+  color: var(--text-lo);
+}
+
+/* カラーパネル */
+#color-panel {
+  border-top: 1px solid var(--border);
+  padding: 8px;
+  background: #0f1120;
+  flex-shrink: 0;
+}
+#color-panel.hidden { display: none; }
+.color-section-label {
+  font-size: 10px;
+  color: var(--text-lo);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+.color-swatch-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.color-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.1s;
+}
+.color-swatch:hover { border-color: #fff; }
+.color-swatch.selected { border-color: var(--accent); }
+#color-picker-main, #color-picker-sub {
+  width: 100%;
+  height: 28px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  margin-bottom: 8px;
+  padding: 0;
+}
+
+/* アウトフィットボタン */
+.outfit-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.outfit-btn {
+  padding: 4px 8px;
+  background: #1a1f2e;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-lo);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.outfit-btn:hover { background: #2a2f42; color: var(--text); }
+.outfit-btn.active { background: #2a3050; border-color: var(--accent); color: var(--accent); }
+
+/* セクションラベル */
+.section-label {
+  font-size: 10px;
+  color: var(--text-lo);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin: 10px 0 5px;
+}
+
+/* ── ベジェ眉エディタ ── */
+.bez-canvas {
+  width: 100%;
+  max-width: 320px;
+  display: block;
+  cursor: crosshair;
+  background: #0d0f18;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  touch-action: none;
+  user-select: none;
+}
+.bez-hint {
+  font-size: 10px;
+  color: var(--text-lo);
+  text-align: center;
+  margin: 4px 0 6px;
+  line-height: 1.4;
+}
+.bez-toolbar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.bez-color-picker {
+  width: 40px;
+  height: 26px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  border-radius: 3px;
+}
+.bez-apply-btn {
+  width: 100%;
+  margin-top: 8px;
+  background: #1a2a1a;
+  border-color: #2a4a2a;
+  color: #7fc87f;
+}
+.bez-apply-btn:hover {
+  background: #224022;
+  color: #a0e8a0;
+}
+.bez-sep {
+  font-size: 10px;
+  color: var(--text-lo);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin: 10px 0 5px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.bez-cell-del {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 14px;
+  height: 14px;
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+  color: #ff6b6b;
+  background: rgba(0,0,0,0.7);
+  border-radius: 2px;
+  cursor: pointer;
+  display: none;
+}
+.thumb-item:hover .bez-cell-del { display: block; }
+
+/* ── 鼻パネル ── */
+.nose-sep {
+  font-size: 10px;
+  color: var(--text-lo);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin: 10px 0 5px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── ビューポート ── */
+#viewport {
+  flex: 1;
+  position: relative;
+  background: #06080f;
+}
+#three-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ローディング */
+#loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(6,8,15,0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+  z-index: 100;
+}
+#loading-overlay.hidden { display: none; }
+.spinner {
+  width: 40px; height: 40px;
+  border: 3px solid #1a1f2e;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+#loading-msg { color: var(--text-lo); font-size: 13px; }
+
+/* カメラコントロール */
+#cam-controls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(8,10,18,0.85);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  backdrop-filter: blur(4px);
+}
+.cam-btn {
+  padding: 4px 10px;
+  background: #1a1f2e;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.cam-btn:hover { background: #2a2f42; }
+.cam-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+.cam-label { color: var(--text-lo); font-size: 10px; white-space: nowrap; }
+.cam-slider { width: 80px; accent-color: var(--accent); }
+
+/* スクロールバー全体 */
+* { scrollbar-width: thin; scrollbar-color: #2a3050 transparent; }
+
+/* ── 3D ペイントツールバー ── */
+#paint3d-bar {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 188px;
+  background: rgba(8, 10, 18, 0.94);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  z-index: 50;
+  backdrop-filter: blur(6px);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+}
+#paint3d-bar.hidden { display: none; }
+.p3d-title {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: bold;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 5px;
+  margin-bottom: 2px;
+}
+.p3d-row { display: flex; align-items: center; gap: 5px; }
+.p3d-lbl { font-size: 10px; color: var(--text-lo); width: 26px; flex-shrink: 0; }
+.p3d-sel {
+  flex: 1;
+  background: #1e2236;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 10px;
+  padding: 2px 4px;
+  font-family: inherit;
+}
+.p3d-btn {
+  flex: 1;
+  padding: 4px 6px;
+  background: #1e2236;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-lo);
+  cursor: pointer;
+  font-size: 10px;
+  font-family: inherit;
+  transition: all 0.12s;
+}
+.p3d-btn:hover { background: #2a2f42; color: var(--text); }
+.p3d-btn.p3d-active { background: #1a2a40; border-color: var(--accent); color: var(--accent); }
+.p3d-color-pick {
+  width: 36px;
+  height: 22px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  border-radius: 3px;
+}
+.p3d-swatches { display: flex; gap: 3px; flex-wrap: wrap; }
+.p3d-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.1s;
+  box-sizing: border-box;
+}
+.p3d-swatch:hover { border-color: rgba(255,255,255,0.6); }
+.p3d-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 2px 0;
+}
+.p3d-sl-row { display: flex; align-items: center; gap: 4px; }
+.p3d-sl-lbl { font-size: 9px; color: var(--text-lo); width: 44px; flex-shrink: 0; text-align: right; }
+.p3d-sl-row input[type=range] { flex: 1; accent-color: var(--accent); height: 3px; }
+.p3d-sl-val { width: 28px; text-align: right; font-size: 9px; color: var(--text-lo); flex-shrink: 0; }
+.p3d-action-btn {
+  width: 100%;
+  padding: 5px;
+  background: #1e2236;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 10px;
+  font-family: inherit;
+  transition: background 0.12s;
+}
+.p3d-action-btn:hover { background: #2a2f42; }
+.p3d-exit-btn { background: #2a1212; border-color: #4a2020; color: #ff8080; margin-top: 2px; }
+.p3d-exit-btn:hover { background: #3a1818; }
+.p3d-hint {
+  font-size: 9px;
+  color: var(--text-lo);
+  line-height: 1.5;
+  text-align: center;
+  padding: 3px 0;
+}

@@ -1,0 +1,18 @@
+{
+  "default_glb": {
+    "groundOffset": 0,
+    "scale": 1,
+    "yPosition": 0,
+    "cameraHeight": 0,
+    "rightFootFix": false,
+    "notes": "標準GLBの基準値"
+  },
+  "default_vrm": {
+    "groundOffset": 0,
+    "scale": 1,
+    "yPosition": 0,
+    "cameraHeight": 0,
+    "rightFootFix": false,
+    "notes": "標準VRMの基準値"
+  }
+}
