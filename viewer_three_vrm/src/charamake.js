@@ -346,6 +346,7 @@ function clearAllObjects() {
   sceneObjects.length = 0;
   selectedId = null;
   currentVrm = null; currentRoot = null; mixer = null;
+  _selHairId = null;
   animClips = []; currentAction = null;
   // Dispose previous environment texture
   if (scene.environment) { scene.environment.dispose(); scene.environment = null; }
@@ -5544,55 +5545,91 @@ const HAIR_STYLE_PRESETS = [
   { id:'h_p06', cat:'個性派', name:'ロマンティック', icon:'feminine', vrm:'/assets/vrm/hair/Victoria_Rubin.vrm' },
 ];
 
-// ── Hair overlay state ────────────────────────────────────
-let _hairOverlayRoot = null;
-let _hairOverlayVrm  = null;
-let _selHairId       = null;
+// ── Hair part state ───────────────────────────────────────
+let _selHairId = null;
 
-async function _loadHairOverlay(url, id) {
-  // remove old overlay
-  if (_hairOverlayRoot) {
-    scene.remove(_hairOverlayRoot);
-    if (_hairOverlayVrm) VRMUtils.deepDispose(_hairOverlayVrm.scene);
-    _hairOverlayRoot = null; _hairOverlayVrm = null;
-  }
-  if (!url) { _selHairId = null; _buildItemsPanel(); return; }
-  setStatus('髪型読み込み中...');
-  try {
-    const gltf = await loader.loadAsync(url);
-    let root, vrm = null;
-    if (gltf.userData.vrm) {
-      vrm = gltf.userData.vrm;
-      VRMUtils.rotateVRM0(vrm);
-      root = vrm.scene;
-    } else {
-      root = gltf.scene;
-    }
-    // Traverse all meshes: hide non-hair, show only hair
-    const found = [];
-    root.traverse(obj => {
-      if (obj.isMesh || obj.isSkinnedMesh) {
-        const nm = (obj.name || '').toLowerCase();
-        const isHair = nm.includes('hair');
-        obj.visible = isHair;
-        found.push((isHair ? '[HAIR]' : '[hide]') + obj.name);
-      }
+// 現在の髪パーツを currentRoot から削除して dispose する
+function removeCurrentHairParts() {
+  if (!currentRoot) return;
+  const parts = currentRoot.userData._hairParts;
+  if (!parts || parts.length === 0) return;
+  parts.forEach(hairRoot => {
+    currentRoot.remove(hairRoot);
+    hairRoot.traverse(obj => {
+      obj.geometry?.dispose();
+      [].concat(obj.material || []).forEach(m => m?.dispose?.());
     });
-    setStatus('髪: ' + found.join(' | '));
-    if (currentRoot) {
-      root.position.copy(currentRoot.position);
-      root.rotation.copy(currentRoot.rotation);
-      root.scale.copy(currentRoot.scale);
+  });
+  currentRoot.userData._hairParts = [];
+}
+
+// 髪型 VRM を読み込んで髪メッシュだけを visible にした root を返す
+async function loadHairPart(url) {
+  const gltf = await loader.loadAsync(url);
+  let root;
+  if (gltf.userData.vrm) {
+    // rotateVRM0 は呼ばない — currentRoot (親) が既に正しい向きを持つため
+    root = gltf.userData.vrm.scene;
+  } else {
+    root = gltf.scene;
+  }
+
+  // 髪メッシュだけ visible、それ以外は hide
+  let hasHair = false;
+  root.traverse(obj => {
+    if (!obj.isMesh && !obj.isSkinnedMesh) return;
+    const nm = (obj.name || '').toLowerCase();
+    const matHair = [].concat(obj.material || []).some(m => /hair/i.test(m?.name || ''));
+    const isHair = nm.includes('hair') || matHair;
+    obj.visible = isHair;
+    if (isHair) hasHair = true;
+  });
+
+  if (!hasHair) {
+    // hair 識別不可の場合はモデル全体を髪パーツとして使う
+    root.traverse(obj => {
+      if (obj.isMesh || obj.isSkinnedMesh) obj.visible = true;
+    });
+  }
+
+  // currentRoot の子として正しく重なるようローカル変換をリセット
+  root.position.set(0, 0, 0);
+  root.rotation.set(0, 0, 0);
+  root.scale.set(1, 1, 1);
+
+  return root;
+}
+
+// 髪パーツを currentRoot に追加（頭ボーンが取れる場合も root レベルで attach）
+// SkinnedMesh は元骨格に依存するため root 添付が最も安全
+function attachHairToHead(hairRoot) {
+  if (!currentRoot) return;
+  currentRoot.add(hairRoot);
+}
+
+// 髪型差し替えエントリポイント
+async function replaceHairPart(url, name) {
+  if (!currentRoot) {
+    setStatus('先にベースモデルを読み込んでください', true);
+    return;
+  }
+  setStatus('髪型を読み込み中...');
+  try {
+    removeCurrentHairParts();
+    const hairRoot = await loadHairPart(url);
+    if (!hairRoot) {
+      setStatus('髪型の読み込みに失敗しました', true);
+      return;
     }
-    scene.add(root);
-    _hairOverlayRoot = root;
-    _hairOverlayVrm  = vrm;
-    _selHairId = id;
-    setStatus('髪型適用完了');
-    setTimeout(() => setStatus(''), 2000);
-    _buildItemsPanel();
+    attachHairToHead(hairRoot);
+    if (!currentRoot.userData._hairParts) currentRoot.userData._hairParts = [];
+    currentRoot.userData._hairParts.push(hairRoot);
+    setStatus('髪型を変更しました: ' + (name || 'Hair'));
+    setTimeout(() => setStatus(''), 1500);
+    buildAllPanels();
   } catch(e) {
-    setStatus('髪型読み込みエラー: ' + e.message, true);
+    console.error('[replaceHairPart]', e);
+    setStatus('髪型変更エラー: ' + (e?.message || e), true);
   }
 }
 
@@ -5604,7 +5641,7 @@ function _buildHairPresetGrid(body) {
     const clr = document.createElement('button');
     clr.textContent = '× 外す';
     clr.style.cssText = 'font-size:9px;padding:1px 6px;background:var(--panel2);border:1px solid var(--border);border-radius:3px;color:var(--text2);cursor:pointer;margin-left:auto;';
-    clr.addEventListener('click', () => _loadHairOverlay(null, null));
+    clr.addEventListener('click', () => { removeCurrentHairParts(); _selHairId = null; _buildItemsPanel(); });
     hdr.appendChild(clr);
   }
   body.appendChild(hdr);
@@ -5630,8 +5667,8 @@ function _buildHairPresetGrid(body) {
       card.appendChild(iconWrap);
       card.appendChild(lbl);
       card.addEventListener('click', () => {
-        if (_selHairId === preset.id) { _loadHairOverlay(null, null); }
-        else { _loadHairOverlay(preset.vrm, preset.id); }
+        if (_selHairId === preset.id) { removeCurrentHairParts(); _selHairId = null; _buildItemsPanel(); }
+        else { _selHairId = preset.id; replaceHairPart(preset.vrm, preset.name); }
       });
       card.addEventListener('mouseenter', () => { if (_selHairId !== preset.id) card.style.borderColor = 'var(--border2)'; });
       card.addEventListener('mouseleave', () => { if (_selHairId !== preset.id) card.style.borderColor = 'transparent'; });
@@ -5838,7 +5875,6 @@ function _paint3dDraw(uv) {
   _paint3dRaycaster.setFromCamera(uv, camera);
   const meshes = [];
   currentRoot.traverse(o => { if (o.isMesh) meshes.push(o); });
-  if (_hairOverlayRoot) _hairOverlayRoot.traverse(o => { if (o.isMesh) meshes.push(o); });
   const hits = _paint3dRaycaster.intersectObjects(meshes, false);
   if (!hits.length || !hits[0].uv) return;
 
