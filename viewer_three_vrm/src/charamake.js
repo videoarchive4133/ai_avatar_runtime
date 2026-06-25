@@ -5645,8 +5645,11 @@ async function loadHairPart(url) {
     });
   }
 
-  // rotation は attachHairToHead で VRM0/1 に合わせて設定するためリセット
-  // position・scale は VRM 本来の値を保持（ボーン基準の位置合わせは attachHairToHead で行う）
+  // scale: VRM ローダーが非標準スケールを持つ場合があるため 1 に正規化する
+  // position: ボーン基準の位置合わせは attachHairToHead/_alignHairToHeadBone で行う
+  // rotation: attachHairToHead で VRM0/1 に合わせて設定するためリセット
+  root.scale.set(1, 1, 1);
+  root.position.set(0, 0, 0);
   root.rotation.set(0, 0, 0);
 
   // VRM参照を保存（removeCurrentHairParts で deepDispose するため）
