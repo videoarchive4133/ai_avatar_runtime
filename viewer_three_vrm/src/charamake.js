@@ -334,18 +334,15 @@ function selectObject(id) {
 
 function clearAllObjects() {
   transformControls.detach();
-  // dispose hair parts (HairPivot) first — must happen before base VRM deepDispose
+  // dispose hair parts first — must happen before base VRM deepDispose
   if (currentRoot) {
     const hairParts = currentRoot.userData._hairParts;
     if (hairParts && hairParts.length > 0) {
-      hairParts.forEach(pivot => {
-        if (pivot.parent) pivot.parent.remove(pivot);
-        const hairRoot = pivot.children.find(c => '_hairVrm' in c.userData) ?? pivot.children[0];
-        if (hairRoot) {
-          const hairVrm = hairRoot.userData._hairVrm;
-          if (hairVrm) { VRMUtils.deepDispose(hairVrm.scene); }
-          else { hairRoot.traverse(obj => { obj.geometry?.dispose(); [].concat(obj.material || []).forEach(m => m?.dispose?.()); }); }
-        }
+      hairParts.forEach(hairRoot => {
+        if (hairRoot.parent) hairRoot.parent.remove(hairRoot);
+        const hairVrm = hairRoot.userData._hairVrm;
+        if (hairVrm) { VRMUtils.deepDispose(hairVrm.scene); }
+        else { hairRoot.traverse(obj => { obj.geometry?.dispose(); [].concat(obj.material || []).forEach(m => m?.dispose?.()); }); }
       });
       currentRoot.userData._hairParts = [];
     }
@@ -810,6 +807,7 @@ function categorizeVRMMaterials() {
   const seen = new Set();
   currentRoot.traverse(obj => {
     if (!obj.isMesh) return;
+    if (!obj.visible) return;
     [].concat(obj.material || []).forEach(m => {
       if (!m || seen.has(m.uuid)) return;
       seen.add(m.uuid);
@@ -5564,26 +5562,21 @@ const HAIR_STYLE_PRESETS = [
 // ── Hair part state ───────────────────────────────────────
 let _selHairId = null;
 
-// 現在の髪パーツ (HairPivot) を削除して dispose する
+// 現在の髪パーツを削除して dispose する
 function removeCurrentHairParts() {
   if (!currentRoot) return;
   const parts = currentRoot.userData._hairParts;
   if (!parts || parts.length === 0) return;
-  parts.forEach(pivot => {
-    // HairPivot はどの親（headBone / currentRoot）にいても parent.remove() で取り外す
-    if (pivot.parent) pivot.parent.remove(pivot);
-    // HairPivot の直下にある hairRoot を探して dispose
-    const hairRoot = pivot.children.find(c => '_hairVrm' in c.userData) ?? pivot.children[0];
-    if (hairRoot) {
-      const hairVrm = hairRoot.userData._hairVrm;
-      if (hairVrm) {
-        VRMUtils.deepDispose(hairVrm.scene);
-      } else {
-        hairRoot.traverse(obj => {
-          obj.geometry?.dispose();
-          [].concat(obj.material || []).forEach(m => m?.dispose?.());
-        });
-      }
+  parts.forEach(hairRoot => {
+    if (hairRoot.parent) hairRoot.parent.remove(hairRoot);
+    const hairVrm = hairRoot.userData._hairVrm;
+    if (hairVrm) {
+      VRMUtils.deepDispose(hairVrm.scene);
+    } else {
+      hairRoot.traverse(obj => {
+        obj.geometry?.dispose();
+        [].concat(obj.material || []).forEach(m => m?.dispose?.());
+      });
     }
   });
   currentRoot.userData._hairParts = [];
@@ -5596,11 +5589,8 @@ async function loadHairPart(url) {
   const hairVrm = gltf.userData.vrm || null;
   if (hairVrm) {
     root = hairVrm.scene;
-    // VRM0 は -Z 向き → rotateVRM0 で +Z 向きに補正（VRM1 は何もしない）
-    VRMUtils.rotateVRM0(hairVrm);
   } else {
     root = gltf.scene;
-    root.rotation.set(0, 0, 0);
   }
 
   // 髪メッシュだけ visible、それ以外は hide
@@ -5620,9 +5610,9 @@ async function loadHairPart(url) {
     });
   }
 
-  // 位置・スケールはリセット（回転は rotateVRM0 が設定済みのためそのまま）
   root.position.set(0, 0, 0);
   root.scale.set(1, 1, 1);
+  root.rotation.set(0, 0, 0);
 
   // VRM参照を保存（removeCurrentHairParts で deepDispose するため）
   root.userData._hairVrm = hairVrm;
@@ -5630,73 +5620,54 @@ async function loadHairPart(url) {
   return root;
 }
 
-// 髪パーツを Head ボーン基準で装着する
-// Head → HairPivot → HairRoot 構造を構築し Three.js の attach() で
-// ワールド座標を維持したまま再ペアレント、SkinnedMesh は rebind する
+// 髪パーツを currentRoot の子として追加する
+// VRM0 髪は -Z 向きなので、currentRoot の回転を考慮して +Z 向きになるよう補正する
+// headBone.attach() + rebind は使わない（bindMatrix が二重適用されて前後反転する）
 function attachHairToHead(hairRoot) {
   if (!currentRoot) return null;
 
-  // 1. ワールド行列を最新化
+  const hairVrm = hairRoot.userData._hairVrm;
+
+  // VRM0 髪: ワールド空間で rotY(π) になるようローカル回転を設定
+  // hairRoot.world.rotY = currentRoot.world.rotY + hairRoot.local.rotY = π (目標)
+  // → hairRoot.local.rotY = π - currentRoot.world.rotY
+  // VRM1 基準 (rotY=0): hairRoot.local.rotY = π  ← VRM0 を +Z 向きに反転
+  // VRM0 基準 (rotY=π): hairRoot.local.rotY = 0  ← 親の π がすでに補正済み
+  if (hairVrm?.meta?.metaVersion === '0') {
+    const baseRotY = currentRoot.rotation.y || 0;
+    hairRoot.rotation.set(0, Math.PI - baseRotY, 0);
+  } else {
+    hairRoot.rotation.set(0, 0, 0);
+  }
+
+  currentRoot.add(hairRoot);
   currentRoot.updateWorldMatrix(true, true);
-  hairRoot.updateWorldMatrix(true, true);
 
-  // 2. HairPivot を作成（回転・位置補正はここに持たせる）
-  const hairPivot = new THREE.Group();
-  hairPivot.name = 'HairPivot';
-
-  // 3. hairRoot を HairPivot に格納
-  hairPivot.add(hairRoot);
-
-  // 4. まず currentRoot に追加してワールド行列を確定させる
-  currentRoot.add(hairPivot);
-  currentRoot.updateWorldMatrix(true, true);
-
-  // 5. デバッグ: bbox 計算（visible なメッシュ対象）
+  // デバッグ: bbox 計算（visible なメッシュ対象）
   const box = new THREE.Box3();
   hairRoot.traverse(obj => {
     if ((obj.isMesh || obj.isSkinnedMesh) && obj.visible) {
-      const objBox = new THREE.Box3().setFromObject(obj);
-      if (!objBox.isEmpty()) box.union(objBox);
+      const b = new THREE.Box3().setFromObject(obj);
+      if (!b.isEmpty()) box.union(b);
     }
   });
   const hairCenter = box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
   const hairSize   = box.isEmpty() ? new THREE.Vector3() : box.getSize(new THREE.Vector3());
-
   const hairWorldPos = new THREE.Vector3();
   hairRoot.getWorldPosition(hairWorldPos);
-
-  const hairLocalPos = hairRoot.position.clone();
-
   console.log('[Hair Debug] Hair world position:', hairWorldPos);
-  console.log('[Hair Debug] Hair local position:', hairLocalPos);
-  console.log('[Hair Debug] Hair quaternion:', hairRoot.quaternion.clone());
-  console.log('[Hair Debug] Hair scale:', hairRoot.scale.clone());
+  console.log('[Hair Debug] Hair rotation (local):', hairRoot.rotation.clone());
   console.log('[Hair Debug] Hair Box3 center:', hairCenter);
   console.log('[Hair Debug] Hair Box3 size:', hairSize);
 
-  // 6. Head ボーンへ再ペアレント（ワールド位置を維持）
   const headBone = currentVrm?.humanoid?.getRawBoneNode(VRMHumanBoneName.Head);
   if (headBone) {
-    headBone.updateWorldMatrix(true, false);
-
     const headWorldPos = new THREE.Vector3();
     headBone.getWorldPosition(headWorldPos);
     console.log('[Hair Debug] Head bone world position:', headWorldPos);
-
-    // attach() はワールド位置を保ったまま headBone の子にする
-    headBone.attach(hairPivot);
-
-    // 7. SkinnedMesh の bindMatrix を新しい matrixWorld で更新
-    hairRoot.updateWorldMatrix(true, true);
-    hairRoot.traverse(obj => {
-      if (obj.isSkinnedMesh) {
-        obj.bind(obj.skeleton, obj.matrixWorld);
-      }
-    });
   }
-  // headBone が取れない場合は currentRoot 直下のまま（既に add 済み）
 
-  return hairPivot;
+  return hairRoot;
 }
 
 // 髪型差し替えエントリポイント
@@ -5707,15 +5678,27 @@ async function replaceHairPart(url, name) {
   }
   setStatus('髪型を読み込み中...');
   try {
+    // 旧オーバーレイ削除後にベースモデルの髪色を取得（色同期用）
     removeCurrentHairParts();
+    const baseMats = categorizeVRMMaterials().hair;
+    const baseHairHex = baseMats.length > 0 ? matColorHex(baseMats[0]) : null;
+    const baseMatsSet = new Set(baseMats.map(m => m.uuid));
+
     const hairRoot = await loadHairPart(url);
     if (!hairRoot) {
       setStatus('髪型の読み込みに失敗しました', true);
       return;
     }
-    const hairPivot = attachHairToHead(hairRoot);
+    attachHairToHead(hairRoot);
     if (!currentRoot.userData._hairParts) currentRoot.userData._hairParts = [];
-    currentRoot.userData._hairParts.push(hairPivot ?? hairRoot);
+    currentRoot.userData._hairParts.push(hairRoot);
+
+    // 新オーバーレイの髪マテリアルにベースモデルの髪色を適用（初期色同期）
+    if (baseHairHex) {
+      const newHairMats = categorizeVRMMaterials().hair.filter(m => !baseMatsSet.has(m.uuid));
+      newHairMats.forEach(m => { if (m.color) setMatColor(m, baseHairHex); });
+    }
+
     setStatus('髪型を変更しました: ' + (name || 'Hair'));
     setTimeout(() => setStatus(''), 1500);
     buildAllPanels();
