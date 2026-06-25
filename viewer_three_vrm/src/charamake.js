@@ -5,6 +5,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { VRMLoaderPlugin, VRMUtils, VRMHumanBoneName } from '@pixiv/three-vrm';
 
+// デバッグログの出力フラグ（本番時は false）
+const _DEBUG = false;
+
 // ── home screen ───────────────────────────────────────────
 const RECENT_KEY = 'ava_recent_projects';
 
@@ -76,8 +79,8 @@ function renderRecentGrid() {
           const f = fi.files?.[0];
           if (!f) return;
           const blobUrl = URL.createObjectURL(f);
-          saveRecentProject(proj.name, null);
-          openEditor(blobUrl, proj.name);
+          saveRecentProject(f.name, null);
+          openEditor(blobUrl, f.name);
         });
         fi.click();
       } else {
@@ -172,7 +175,7 @@ document.getElementById('home-btn-open').addEventListener('click', () => {
     if (!f) return;
     const url = URL.createObjectURL(f);
     openEditor(url, f.name);
-    saveRecentProject(f.name, url); // URL kept for recent project re-open
+    saveRecentProject(f.name, null); // Blob URL は永続化不可 — null で保存
   });
   fi.click();
 });
@@ -540,7 +543,7 @@ async function renderSampleThumb(imgEl, url, isMannequin) {
     imgEl.onload = () => imgEl.classList.add('loaded');
     imgEl.src = c2d.toDataURL('image/png');
   } catch (e) {
-    console.warn('[thumb]', url || 'mannequin', e.message);
+    if (_DEBUG) console.warn('[thumb]', url || 'mannequin', e.message);
   } finally {
     rt.dispose();
     if (root) ts.remove(root);
@@ -561,10 +564,16 @@ async function renderSampleThumb(imgEl, url, isMannequin) {
 }
 
 async function renderAllSampleThumbs() {
-  for (const card of document.querySelectorAll('.home-sample-card')) {
-    const img = card.querySelector('img.thumb-img');
-    if (!img) continue;
-    await renderSampleThumb(img, card.dataset.url, !!card.dataset.mannequin);
+  const CONCURRENCY = 3; // GPU 過負荷を避けるため同時実行数を制限
+  const cards = [...document.querySelectorAll('.home-sample-card')];
+  for (let i = 0; i < cards.length; i += CONCURRENCY) {
+    await Promise.all(
+      cards.slice(i, i + CONCURRENCY).map(card => {
+        const img = card.querySelector('img.thumb-img');
+        if (!img) return Promise.resolve();
+        return renderSampleThumb(img, card.dataset.url, !!card.dataset.mannequin);
+      })
+    );
   }
 }
 
@@ -713,7 +722,13 @@ function boneJaName(name) {
 async function addToScene(url, name) {
   setStatus('読み込み中...');
   try {
-    const gltf = await loader.loadAsync(url);
+    let gltf;
+    try {
+      gltf = await loader.loadAsync(url);
+    } finally {
+      // Blob URL はロード完了後に不要（成功・失敗いずれも revoke してメモリを解放）
+      if (url?.startsWith('blob:')) URL.revokeObjectURL(url);
+    }
     let root, vrm = null;
 
     if (gltf.userData.vrm) {
@@ -3280,7 +3295,12 @@ function _buildOutfitItems(body) {
 async function addClothingToScene(url, name) {
   setStatus('衣装を読み込み中...');
   try {
-    const gltf = await loader.loadAsync(url);
+    let gltf;
+    try {
+      gltf = await loader.loadAsync(url);
+    } finally {
+      if (url?.startsWith('blob:')) URL.revokeObjectURL(url);
+    }
     let root;
     let vrm = null;
     if (gltf.userData.vrm) {
