@@ -248,7 +248,7 @@ function faceThumbItems(prefix, ids) {
   ];
 }
 
-const HAIR_S_IDS   = ['01','02','03','04','05','06'];
+const HAIR_S_IDS   = ['00']; // 実在するモデルのみ (bo_hair_s_00.glb)
 const EYE_IDS      = Array.from({length: 18}, (_,i) => String(i).padStart(3,'0'));
 const EYEBROW_IDS  = Array.from({length: 15}, (_,i) => String(i).padStart(3,'0'));
 const EYELINE_IDS  = Array.from({length: 14}, (_,i) => String(i).padStart(3,'0'));
@@ -332,8 +332,8 @@ const CATEGORIES = {
           })),
         ],
       },
-      { key: 'hair_side',  label: '横髪',   type: 'thumb_only',
-        items: hairThumbItems('hair_s', HAIR_S_IDS),
+      { key: 'hair_side',  label: '横髪',   type: 'parts', slot: 'hair_side', color: true,
+        items: hairItems('hair_s', HAIR_S_IDS),
       },
     ],
   },
@@ -4838,6 +4838,7 @@ async function applyLoadedData(d) {
       head:        findSlotItem('head',        uiState.head),
       hair_front:  findSlotItem('hair_front',  uiState.hair_front),
       hair_back:   findSlotItem('hair_back',   uiState.hair_back),
+      hair_side:   findSlotItem('hair_side',   uiState.hair_side),
       clothes_top: findSlotItem('clothes_top', uiState.clothes_top),
       clothes_bot: findSlotItem('clothes_bot', uiState.clothes_bot),
     };
