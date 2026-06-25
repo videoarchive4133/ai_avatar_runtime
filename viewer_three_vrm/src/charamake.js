@@ -5645,14 +5645,62 @@ async function loadHairPart(url) {
     });
   }
 
-  root.position.set(0, 0, 0);
-  root.scale.set(1, 1, 1);
+  // rotation は attachHairToHead で VRM0/1 に合わせて設定するためリセット
+  // position・scale は VRM 本来の値を保持（ボーン基準の位置合わせは attachHairToHead で行う）
   root.rotation.set(0, 0, 0);
 
   // VRM参照を保存（removeCurrentHairParts で deepDispose するため）
   root.userData._hairVrm = hairVrm;
 
   return root;
+}
+
+// ベースモデルの Head ボーン世界座標と髪 VRM の Head ボーン世界座標を一致させる。
+// hairRoot はすでに currentRoot の子として position(0,0,0) で追加済みであること。
+// currentVrm が null（マネキン等）の場合は何もしない。
+function _alignHairToHeadBone(hairRoot) {
+  if (!currentVrm?.humanoid) return;
+
+  const hairVrm = hairRoot.userData._hairVrm;
+
+  // ベースモデルの Head ボーン世界座標
+  const baseHeadBone = currentVrm.humanoid.getRawBoneNode(VRMHumanBoneName.Head);
+  if (!baseHeadBone) return;
+  const baseHeadWorld = new THREE.Vector3();
+  baseHeadBone.getWorldPosition(baseHeadWorld);
+
+  // 髪 VRM の Head ボーンを取得（VRM humanoid → 名前検索の順でフォールバック）
+  let hairHeadBone = null;
+  if (hairVrm?.humanoid) {
+    hairHeadBone = hairVrm.humanoid.getRawBoneNode(VRMHumanBoneName.Head) || null;
+  }
+  if (!hairHeadBone) {
+    hairRoot.traverse(obj => {
+      if (hairHeadBone) return;
+      const n = obj.name || '';
+      if (/^J_Bip_C_Head$|^Head$|^head$/i.test(n)) hairHeadBone = obj;
+    });
+  }
+  if (!hairHeadBone) return;
+
+  // hairRoot が (0,0,0) のときの髪 Head ボーン世界座標
+  hairRoot.position.set(0, 0, 0);
+  hairRoot.updateWorldMatrix(true, true);
+  const hairHeadWorld = new THREE.Vector3();
+  hairHeadBone.getWorldPosition(hairHeadWorld);
+
+  // 世界座標差分を currentRoot のローカル座標系へ変換（ベクトルとして変換）
+  const worldDelta = new THREE.Vector3().subVectors(baseHeadWorld, hairHeadWorld);
+  const invMat3 = new THREE.Matrix3().setFromMatrix4(currentRoot.matrixWorld).invert();
+  hairRoot.position.copy(worldDelta.clone().applyMatrix3(invMat3));
+  hairRoot.updateWorldMatrix(true, false);
+
+  if (_DEBUG) {
+    console.log('[Hair Debug] baseHead world :', baseHeadWorld.toArray().map(v => v.toFixed(4)));
+    console.log('[Hair Debug] hairHead world :', hairHeadWorld.toArray().map(v => v.toFixed(4)));
+    console.log('[Hair Debug] worldDelta      :', worldDelta.toArray().map(v => v.toFixed(4)));
+    console.log('[Hair Debug] localDelta      :', hairRoot.position.toArray().map(v => v.toFixed(4)));
+  }
 }
 
 // 髪パーツを currentRoot の子として追加する
@@ -5682,8 +5730,11 @@ function attachHairToHead(hairRoot) {
     hairRoot.rotation.set(0, 0, 0);
   }
 
+  // position(0,0,0) で追加してからボーン基準で位置合わせ
+  hairRoot.position.set(0, 0, 0);
   currentRoot.add(hairRoot);
   currentRoot.updateWorldMatrix(true, true);
+  _alignHairToHeadBone(hairRoot);
 
   return hairRoot;
 }
@@ -5699,7 +5750,11 @@ async function replaceHairPart(url, name) {
     // 旧オーバーレイ削除後にベースモデルの髪色を取得（色同期用）
     removeCurrentHairParts();
     const baseMats = categorizeVRMMaterials().hair;
-    const baseHairHex = baseMats.length > 0 ? matColorHex(baseMats[0]) : null;
+    const baseColor = baseMats.length > 0 ? matColorHex(baseMats[0]) : null;
+    const baseShade = baseMats.length > 0 && isMToon(baseMats[0]) && baseMats[0].shadeColorFactor
+      ? colorObjHex(baseMats[0].shadeColorFactor) : null;
+    const baseRim = baseMats.length > 0 && isMToon(baseMats[0]) && baseMats[0].parametricRimColorFactor
+      ? colorObjHex(baseMats[0].parametricRimColorFactor) : null;
     const baseMatsSet = new Set(baseMats.map(m => m.uuid));
 
     const hairRoot = await loadHairPart(url);
@@ -5711,10 +5766,14 @@ async function replaceHairPart(url, name) {
     if (!currentRoot.userData._hairParts) currentRoot.userData._hairParts = [];
     currentRoot.userData._hairParts.push(hairRoot);
 
-    // 新オーバーレイの髪マテリアルにベースモデルの髪色を適用（初期色同期）
-    if (baseHairHex) {
+    // 新オーバーレイの髪マテリアルにベースモデルの髪色（ベース・影・リム）を適用
+    if (baseColor) {
       const newHairMats = categorizeVRMMaterials().hair.filter(m => !baseMatsSet.has(m.uuid));
-      newHairMats.forEach(m => { if (m.color) setMatColor(m, baseHairHex); });
+      newHairMats.forEach(m => {
+        if (m.color) setMatColor(m, baseColor);
+        if (baseShade && m.shadeColorFactor) setColorObj(m.shadeColorFactor, baseShade);
+        if (baseRim && m.parametricRimColorFactor) setColorObj(m.parametricRimColorFactor, baseRim);
+      });
     }
 
     setStatus('髪型を変更しました: ' + (name || 'Hair'));
