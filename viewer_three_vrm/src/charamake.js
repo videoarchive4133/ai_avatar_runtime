@@ -175,7 +175,6 @@ document.getElementById('home-btn-open').addEventListener('click', () => {
     if (!f) return;
     const url = URL.createObjectURL(f);
     openEditor(url, f.name);
-    saveRecentProject(f.name, null); // Blob URL は永続化不可 — null で保存
   });
   fi.click();
 });
