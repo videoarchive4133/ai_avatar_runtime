@@ -13,8 +13,10 @@ function getRecentProjects() {
 }
 
 function saveRecentProject(name, url) {
+  // Blob URL はセッション固有で再起動後に無効になるため null に正規化して保存
+  const persistUrl = (url && !url.startsWith('blob:')) ? url : null;
   const list = getRecentProjects().filter(p => p.name !== name);
-  list.unshift({ name, url, date: new Date().toISOString() });
+  list.unshift({ name, url: persistUrl, date: new Date().toISOString() });
   localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 8)));
   renderRecentGrid();
 }
@@ -51,19 +53,37 @@ function renderRecentGrid() {
   projects.forEach(proj => {
     const card = document.createElement('div');
     card.className = 'home-project-card';
-    const ext = (proj.url || '').split('.').pop().toLowerCase();
+    // URL が null の場合はローカルファイル（Blob URL は永続化不可）
+    const isLocal = !proj.url;
+    const ext = (proj.url || proj.name || '').split('.').pop().toLowerCase();
     const badge = (ext === 'vrm') ? 'VRM' : (ext === 'glb' || ext === 'gltf') ? 'GLB' : '';
     const escName = proj.name.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     card.innerHTML = `
-      <div class="home-project-thumb" style="position:relative;">◈${badge ? `<span style="position:absolute;top:6px;right:6px;background:rgba(255,255,255,0.88);color:#3c3c43;font-size:9px;font-weight:700;padding:2px 5px;border-radius:4px;box-shadow:0 1px 4px rgba(0,0,0,.18);">${badge}</span>` : ''}</div>
+      <div class="home-project-thumb" style="position:relative;">◈${badge ? `<span style="position:absolute;top:6px;right:6px;background:rgba(255,255,255,0.88);color:#3c3c43;font-size:9px;font-weight:700;padding:2px 5px;border-radius:4px;box-shadow:0 1px 4px rgba(0,0,0,.18);">${badge}</span>` : ''}${isLocal ? `<span style="position:absolute;bottom:6px;left:6px;background:rgba(0,0,0,0.6);color:#fff;font-size:8px;padding:2px 4px;border-radius:3px;" title="ローカルファイル: 再度選択が必要です">📂</span>` : ''}</div>
       <div class="home-project-info">
         <div class="home-project-name">${escName}</div>
         <div class="home-project-date">${fmtDate(proj.date)}</div>
       </div>
       <button class="home-project-remove" title="削除">✕</button>
     `;
-    card.querySelector('.home-project-name').setAttribute('title', proj.name);
-    card.addEventListener('click', () => openEditor(proj.url, proj.name));
+    card.querySelector('.home-project-name').setAttribute('title', proj.name + (isLocal ? ' (ローカルファイル — 再選択)' : ''));
+    card.addEventListener('click', () => {
+      if (isLocal) {
+        // Blob URL は再起動後に無効のため、ファイルを再選択してもらう
+        const fi = document.createElement('input');
+        fi.type = 'file'; fi.accept = '.vrm,.glb,.gltf';
+        fi.addEventListener('change', () => {
+          const f = fi.files?.[0];
+          if (!f) return;
+          const blobUrl = URL.createObjectURL(f);
+          saveRecentProject(proj.name, null);
+          openEditor(blobUrl, proj.name);
+        });
+        fi.click();
+      } else {
+        openEditor(proj.url, proj.name);
+      }
+    });
     card.querySelector('.home-project-remove').addEventListener('click', e => {
       e.stopPropagation();
       removeRecentProject(proj.name);
@@ -332,21 +352,30 @@ function selectObject(id) {
   buildAllPanels();
 }
 
+// 指定 root の髪パーツを全て parent から除去して dispose する共通ヘルパー
+function disposeHairParts(root) {
+  if (!root) return;
+  const parts = root.userData._hairParts;
+  if (!parts || parts.length === 0) return;
+  parts.forEach(hairRoot => {
+    if (hairRoot.parent) hairRoot.parent.remove(hairRoot);
+    const hairVrm = hairRoot.userData._hairVrm;
+    if (hairVrm) {
+      VRMUtils.deepDispose(hairVrm.scene);
+    } else {
+      hairRoot.traverse(obj => {
+        obj.geometry?.dispose();
+        [].concat(obj.material || []).forEach(m => m?.dispose?.());
+      });
+    }
+  });
+  root.userData._hairParts = [];
+}
+
 function clearAllObjects() {
   transformControls.detach();
-  // dispose hair parts first — must happen before base VRM deepDispose
-  if (currentRoot) {
-    const hairParts = currentRoot.userData._hairParts;
-    if (hairParts && hairParts.length > 0) {
-      hairParts.forEach(hairRoot => {
-        if (hairRoot.parent) hairRoot.parent.remove(hairRoot);
-        const hairVrm = hairRoot.userData._hairVrm;
-        if (hairVrm) { VRMUtils.deepDispose(hairVrm.scene); }
-        else { hairRoot.traverse(obj => { obj.geometry?.dispose(); [].concat(obj.material || []).forEach(m => m?.dispose?.()); }); }
-      });
-      currentRoot.userData._hairParts = [];
-    }
-  }
+  // 全オブジェクトの髪パーツを先に dispose — base VRM deepDispose より前に実施
+  sceneObjects.forEach(o => disposeHairParts(o.root));
   sceneObjects.forEach(o => {
     scene.remove(o.root);
     if (o.mixer) { o.mixer.stopAllAction(); o.mixer.uncacheRoot(o.root); }
@@ -375,6 +404,8 @@ function removeObject(id) {
   const idx = sceneObjects.findIndex(o => o.id === id);
   if (idx < 0) return;
   const obj = sceneObjects[idx];
+  // 髪パーツを先に dispose — base VRM deepDispose より前に実施
+  disposeHairParts(obj.root);
   if (obj.mixer) { obj.mixer.stopAllAction(); obj.mixer.uncacheRoot(obj.root); }
   scene.remove(obj.root);
   if (obj.vrm) VRMUtils.deepDispose(obj.vrm.scene);
@@ -5564,22 +5595,7 @@ let _selHairId = null;
 
 // 現在の髪パーツを削除して dispose する
 function removeCurrentHairParts() {
-  if (!currentRoot) return;
-  const parts = currentRoot.userData._hairParts;
-  if (!parts || parts.length === 0) return;
-  parts.forEach(hairRoot => {
-    if (hairRoot.parent) hairRoot.parent.remove(hairRoot);
-    const hairVrm = hairRoot.userData._hairVrm;
-    if (hairVrm) {
-      VRMUtils.deepDispose(hairVrm.scene);
-    } else {
-      hairRoot.traverse(obj => {
-        obj.geometry?.dispose();
-        [].concat(obj.material || []).forEach(m => m?.dispose?.());
-      });
-    }
-  });
-  currentRoot.userData._hairParts = [];
+  disposeHairParts(currentRoot);
 }
 
 // 髪型 VRM を読み込んで髪メッシュだけを visible にした root を返す
@@ -5623,6 +5639,13 @@ async function loadHairPart(url) {
 // 髪パーツを currentRoot の子として追加する
 // VRM0 髪は -Z 向きなので、currentRoot の回転を考慮して +Z 向きになるよう補正する
 // headBone.attach() + rebind は使わない（bindMatrix が二重適用されて前後反転する）
+//
+// [仕様制限] 髪パーツは静止編集（キャラメイク）専用
+// currentRoot に add しているため、アニメーション/ポーズ再生時に頭ボーンが動いても
+// 髪は追従しない。headBone.attach() + SkinnedMesh.bind() による追従実装は
+// bindMatrix の二重適用で前後反転が再発するため採用しない。
+// アニメーション追従が必要な場合は VRM SpringBone を持つ別モデルでの
+// ベイク合成など、別アーキテクチャが必要。
 function attachHairToHead(hairRoot) {
   if (!currentRoot) return null;
 
@@ -5642,30 +5665,6 @@ function attachHairToHead(hairRoot) {
 
   currentRoot.add(hairRoot);
   currentRoot.updateWorldMatrix(true, true);
-
-  // デバッグ: bbox 計算（visible なメッシュ対象）
-  const box = new THREE.Box3();
-  hairRoot.traverse(obj => {
-    if ((obj.isMesh || obj.isSkinnedMesh) && obj.visible) {
-      const b = new THREE.Box3().setFromObject(obj);
-      if (!b.isEmpty()) box.union(b);
-    }
-  });
-  const hairCenter = box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
-  const hairSize   = box.isEmpty() ? new THREE.Vector3() : box.getSize(new THREE.Vector3());
-  const hairWorldPos = new THREE.Vector3();
-  hairRoot.getWorldPosition(hairWorldPos);
-  console.log('[Hair Debug] Hair world position:', hairWorldPos);
-  console.log('[Hair Debug] Hair rotation (local):', hairRoot.rotation.clone());
-  console.log('[Hair Debug] Hair Box3 center:', hairCenter);
-  console.log('[Hair Debug] Hair Box3 size:', hairSize);
-
-  const headBone = currentVrm?.humanoid?.getRawBoneNode(VRMHumanBoneName.Head);
-  if (headBone) {
-    const headWorldPos = new THREE.Vector3();
-    headBone.getWorldPosition(headWorldPos);
-    console.log('[Hair Debug] Head bone world position:', headWorldPos);
-  }
 
   return hairRoot;
 }
