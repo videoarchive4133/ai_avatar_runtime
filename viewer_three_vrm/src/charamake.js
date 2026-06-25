@@ -359,6 +359,9 @@ function disposeHairParts(root) {
   if (!root) return;
   const parts = root.userData._hairParts;
   if (!parts || parts.length === 0) return;
+  // ベース髪メッシュの可視性を復元
+  (root.userData._hiddenBaseHair || []).forEach(obj => { obj.visible = true; });
+  root.userData._hiddenBaseHair = [];
   parts.forEach(hairRoot => {
     if (hairRoot.parent) hairRoot.parent.remove(hairRoot);
     const hairVrm = hairRoot.userData._hairVrm;
@@ -5617,7 +5620,7 @@ function removeCurrentHairParts() {
   disposeHairParts(currentRoot);
 }
 
-// 髪型 VRM を読み込んで髪メッシュだけを visible にした root を返す
+// 髪型 VRM を読み込んで髪メッシュを visible にした root を返す
 async function loadHairPart(url) {
   const gltf = await loader.loadAsync(url);
   let root;
@@ -5628,51 +5631,52 @@ async function loadHairPart(url) {
     root = gltf.scene;
   }
 
-  // 髪メッシュだけ visible、それ以外は hide
+  // 非髪と断定できるメッシュパターン（顔/体/目/口など）
+  // ^ アンカーで先頭一致のみ対象にして誤検出を防ぐ
+  const NON_HAIR_RE = /^(?:face|body|skin|neck|spine|chest|hip|arm|leg|hand|finger|foot|toe|nail|eye(?!lash)|brow|iris|sclera|pupil|lip|mouth|nose|teeth|tongue|ear|cheek|forehead|jaw|chin)/i;
+
   let hasHair = false;
+  const meshList = [];
   root.traverse(obj => {
     if (!obj.isMesh && !obj.isSkinnedMesh) return;
-    const nm = (obj.name || '').toLowerCase();
-    const matHair = [].concat(obj.material || []).some(m => /hair/i.test(m?.name || ''));
-    const isHair = nm.includes('hair') || matHair;
+    meshList.push(obj);
+    const nm = obj.name || '';
+    const matNames = [].concat(obj.material || []).map(m => m?.name || '');
+    const matHair = matNames.some(n => /hair/i.test(n));
+    const nmHair  = /hair/i.test(nm);
+    const nonHair = NON_HAIR_RE.test(nm) || matNames.some(n => NON_HAIR_RE.test(n));
+    // 明示的に hair か、非髪と断定できないものをすべて表示（髪 VRM の不明メッシュ = 髪扱い）
+    const isHair  = nmHair || matHair || !nonHair;
     obj.visible = isHair;
     if (isHair) hasHair = true;
   });
 
   if (!hasHair) {
-    root.traverse(obj => {
-      if (obj.isMesh || obj.isSkinnedMesh) obj.visible = true;
-    });
+    meshList.forEach(obj => { obj.visible = true; });
   }
 
-  // scale: VRM ローダーが非標準スケールを持つ場合があるため 1 に正規化する
-  // position: ボーン基準の位置合わせは attachHairToHead/_alignHairToHeadBone で行う
-  // rotation: attachHairToHead で VRM0/1 に合わせて設定するためリセット
+  // scale: 1 に正規化（VRM ローダーが非標準スケールを持つ場合に対応）
+  // position/rotation: attachHairToHead → _alignHairToHeadBone で設定するためリセット
   root.scale.set(1, 1, 1);
   root.position.set(0, 0, 0);
   root.rotation.set(0, 0, 0);
-
-  // VRM参照を保存（removeCurrentHairParts で deepDispose するため）
   root.userData._hairVrm = hairVrm;
-
   return root;
 }
 
 // ベースモデルの Head ボーン世界座標と髪 VRM の Head ボーン世界座標を一致させる。
-// hairRoot はすでに currentRoot の子として position(0,0,0) で追加済みであること。
-// currentVrm が null（マネキン等）の場合は何もしない。
+// スケール係数も Neck→Head ボーン距離比から計算して適用する。
+// hairRoot はすでに currentRoot の子として追加済みであること。
 function _alignHairToHeadBone(hairRoot) {
   if (!currentVrm?.humanoid) return;
 
   const hairVrm = hairRoot.userData._hairVrm;
-
-  // ベースモデルの Head ボーン世界座標
   const baseHeadBone = currentVrm.humanoid.getRawBoneNode(VRMHumanBoneName.Head);
   if (!baseHeadBone) return;
   const baseHeadWorld = new THREE.Vector3();
   baseHeadBone.getWorldPosition(baseHeadWorld);
 
-  // 髪 VRM の Head ボーンを取得（VRM humanoid → 名前検索の順でフォールバック）
+  // 髪 VRM の Head ボーンを取得（VRM humanoid → 名前検索フォールバック）
   let hairHeadBone = null;
   if (hairVrm?.humanoid) {
     hairHeadBone = hairVrm.humanoid.getRawBoneNode(VRMHumanBoneName.Head) || null;
@@ -5680,30 +5684,113 @@ function _alignHairToHeadBone(hairRoot) {
   if (!hairHeadBone) {
     hairRoot.traverse(obj => {
       if (hairHeadBone) return;
-      const n = obj.name || '';
-      if (/^J_Bip_C_Head$|^Head$|^head$/i.test(n)) hairHeadBone = obj;
+      if (/^J_Bip_C_Head$|^Head$|^head$/i.test(obj.name || '')) hairHeadBone = obj;
     });
   }
-  if (!hairHeadBone) return;
 
-  // hairRoot が (0,0,0) のときの髪 Head ボーン世界座標
+  // 基準位置にリセット
   hairRoot.position.set(0, 0, 0);
+  hairRoot.scale.set(1, 1, 1);
   hairRoot.updateWorldMatrix(true, true);
-  const hairHeadWorld = new THREE.Vector3();
-  hairHeadBone.getWorldPosition(hairHeadWorld);
 
-  // 世界座標差分を currentRoot のローカル座標系へ変換（ベクトルとして変換）
-  const worldDelta = new THREE.Vector3().subVectors(baseHeadWorld, hairHeadWorld);
+  // スケール計算・適用（Neck→Head ボーン距離比 または bbox X サイズ比）
+  const scaleFactor = _computeHairScale(hairVrm, hairRoot, baseHeadBone);
+  hairRoot.scale.setScalar(scaleFactor);
+  hairRoot.updateWorldMatrix(true, true);
+
+  // 位置合わせ参照点: Head ボーン優先 → visible メッシュ bbox 上端中央フォールバック
+  let sourceWorld;
+  if (hairHeadBone) {
+    sourceWorld = new THREE.Vector3();
+    hairHeadBone.getWorldPosition(sourceWorld);
+  } else {
+    const box = new THREE.Box3();
+    hairRoot.traverse(obj => {
+      if ((obj.isMesh || obj.isSkinnedMesh) && obj.visible) box.expandByObject(obj);
+    });
+    if (box.isEmpty()) return;
+    sourceWorld = new THREE.Vector3(
+      (box.min.x + box.max.x) / 2,
+      box.max.y,
+      (box.min.z + box.max.z) / 2
+    );
+  }
+
+  const worldDelta = new THREE.Vector3().subVectors(baseHeadWorld, sourceWorld);
   const invMat3 = new THREE.Matrix3().setFromMatrix4(currentRoot.matrixWorld).invert();
   hairRoot.position.copy(worldDelta.clone().applyMatrix3(invMat3));
   hairRoot.updateWorldMatrix(true, false);
 
   if (_DEBUG) {
-    console.log('[Hair Debug] baseHead world :', baseHeadWorld.toArray().map(v => v.toFixed(4)));
-    console.log('[Hair Debug] hairHead world :', hairHeadWorld.toArray().map(v => v.toFixed(4)));
-    console.log('[Hair Debug] worldDelta      :', worldDelta.toArray().map(v => v.toFixed(4)));
-    console.log('[Hair Debug] localDelta      :', hairRoot.position.toArray().map(v => v.toFixed(4)));
+    const bBox = new THREE.Box3();
+    const excl = new Set();
+    hairRoot.traverse(o => excl.add(o.uuid));
+    currentRoot?.traverse(obj => {
+      if ((!obj.isMesh && !obj.isSkinnedMesh) || !obj.visible || excl.has(obj.uuid)) return;
+      const nm = (obj.name || '').toLowerCase();
+      const mns = [].concat(obj.material || []).map(m => (m?.name || '').toLowerCase());
+      if (/hair/i.test(nm) || mns.some(n => /hair/i.test(n))) bBox.expandByObject(obj);
+    });
+    const hBox = new THREE.Box3();
+    const vis = [], hid = [];
+    hairRoot.traverse(obj => {
+      if (!obj.isMesh && !obj.isSkinnedMesh) return;
+      if (obj.visible) { hBox.expandByObject(obj); vis.push(obj.name); }
+      else hid.push(obj.name);
+    });
+    const f = v => v?.toArray().map(n => n.toFixed(4));
+    console.log('[Hair Debug] baseHead world     :', f(baseHeadWorld));
+    console.log('[Hair Debug] baseHairBox size   :', bBox.isEmpty() ? null : f(bBox.getSize(new THREE.Vector3())));
+    console.log('[Hair Debug] baseHairBox center :', bBox.isEmpty() ? null : f(bBox.getCenter(new THREE.Vector3())));
+    console.log('[Hair Debug] hairBox size       :', hBox.isEmpty() ? null : f(hBox.getSize(new THREE.Vector3())));
+    console.log('[Hair Debug] hairBox center     :', hBox.isEmpty() ? null : f(hBox.getCenter(new THREE.Vector3())));
+    console.log('[Hair Debug] scaleFactor        :', scaleFactor.toFixed(4));
+    console.log('[Hair Debug] sourceWorld        :', f(sourceWorld));
+    console.log('[Hair Debug] worldDelta         :', f(worldDelta));
+    console.log('[Hair Debug] localPos           :', f(hairRoot.position));
+    console.log('[Hair Debug] visible meshes     :', vis);
+    console.log('[Hair Debug] hidden meshes      :', hid);
   }
+}
+
+// Neck→Head ボーン距離比でスケール係数を計算する（clamp 0.5–2.0）。
+// フォールバック: ベース髪 bbox X サイズ vs 髪オーバーレイ bbox X サイズ。
+function _computeHairScale(hairVrm, hairRoot, baseHeadBone) {
+  const baseNeck = currentVrm?.humanoid?.getRawBoneNode(VRMHumanBoneName.Neck);
+  if (baseNeck && hairVrm?.humanoid) {
+    const hairNeck = hairVrm.humanoid.getRawBoneNode(VRMHumanBoneName.Neck);
+    const hairHead = hairVrm.humanoid.getRawBoneNode(VRMHumanBoneName.Head);
+    if (hairNeck && hairHead) {
+      const bn = new THREE.Vector3(); baseNeck.getWorldPosition(bn);
+      const bh = new THREE.Vector3(); baseHeadBone.getWorldPosition(bh);
+      const hn = new THREE.Vector3(); hairNeck.getWorldPosition(hn);
+      const hh = new THREE.Vector3(); hairHead.getWorldPosition(hh);
+      const hairDist = hn.distanceTo(hh);
+      if (hairDist > 0.0001) {
+        return Math.max(0.5, Math.min(2.0, bn.distanceTo(bh) / hairDist));
+      }
+    }
+  }
+  // フォールバック: X 軸サイズ比（頭幅が最も安定した指標）
+  const excl = new Set();
+  hairRoot.traverse(o => excl.add(o.uuid));
+  const baseBox = new THREE.Box3();
+  currentRoot?.traverse(obj => {
+    if ((!obj.isMesh && !obj.isSkinnedMesh) || !obj.visible || excl.has(obj.uuid)) return;
+    const nm = (obj.name || '').toLowerCase();
+    const mns = [].concat(obj.material || []).map(m => (m?.name || '').toLowerCase());
+    if (/hair/i.test(nm) || mns.some(n => /hair/i.test(n))) baseBox.expandByObject(obj);
+  });
+  const hairBox = new THREE.Box3();
+  hairRoot.traverse(obj => {
+    if ((obj.isMesh || obj.isSkinnedMesh) && obj.visible) hairBox.expandByObject(obj);
+  });
+  if (!baseBox.isEmpty() && !hairBox.isEmpty()) {
+    const bs = new THREE.Vector3(); baseBox.getSize(bs);
+    const hs = new THREE.Vector3(); hairBox.getSize(hs);
+    if (hs.x > 0.001) return Math.max(0.5, Math.min(2.0, bs.x / hs.x));
+  }
+  return 1.0;
 }
 
 // 髪パーツを currentRoot の子として追加する
@@ -5750,14 +5837,24 @@ async function replaceHairPart(url, name) {
   }
   setStatus('髪型を読み込み中...');
   try {
-    // 旧オーバーレイ削除後にベースモデルの髪色を取得（色同期用）
+    // 旧オーバーレイ削除（非表示にしたベース髪メッシュも復元される）
     removeCurrentHairParts();
+
+    // ベースモデルの髪色を全マテリアルから取得（可視状態で取得）
     const baseMats = categorizeVRMMaterials().hair;
-    const baseColor = baseMats.length > 0 ? matColorHex(baseMats[0]) : null;
-    const baseShade = baseMats.length > 0 && isMToon(baseMats[0]) && baseMats[0].shadeColorFactor
-      ? colorObjHex(baseMats[0].shadeColorFactor) : null;
-    const baseRim = baseMats.length > 0 && isMToon(baseMats[0]) && baseMats[0].parametricRimColorFactor
-      ? colorObjHex(baseMats[0].parametricRimColorFactor) : null;
+    const baseColor   = baseMats.length > 0 ? matColorHex(baseMats[0]) : null;
+    const baseShade   = (() => {
+      const m = baseMats.find(m => isMToon(m) && m.shadeColorFactor);
+      return m ? colorObjHex(m.shadeColorFactor) : null;
+    })();
+    const baseRim     = (() => {
+      const m = baseMats.find(m => isMToon(m) && m.parametricRimColorFactor);
+      return m ? colorObjHex(m.parametricRimColorFactor) : null;
+    })();
+    const baseOutline = (() => {
+      const m = baseMats.find(m => isMToon(m) && m.outlineColorFactor);
+      return m ? colorObjHex(m.outlineColorFactor) : null;
+    })();
     const baseMatsSet = new Set(baseMats.map(m => m.uuid));
 
     const hairRoot = await loadHairPart(url);
@@ -5769,13 +5866,29 @@ async function replaceHairPart(url, name) {
     if (!currentRoot.userData._hairParts) currentRoot.userData._hairParts = [];
     currentRoot.userData._hairParts.push(hairRoot);
 
-    // 新オーバーレイの髪マテリアルにベースモデルの髪色（ベース・影・リム）を適用
+    // ベース VRM の髪メッシュを非表示（オーバーレイで覆うため）
+    // disposeHairParts 時に自動復元される
+    if (!currentRoot.userData._hiddenBaseHair) currentRoot.userData._hiddenBaseHair = [];
+    const overlayUuids = new Set();
+    hairRoot.traverse(o => overlayUuids.add(o.uuid));
+    currentRoot.traverse(obj => {
+      if ((!obj.isMesh && !obj.isSkinnedMesh) || !obj.visible || overlayUuids.has(obj.uuid)) return;
+      const nm  = (obj.name || '').toLowerCase();
+      const mns = [].concat(obj.material || []).map(m => (m?.name || '').toLowerCase());
+      if (/hair/i.test(nm) || mns.some(n => /hair/i.test(n))) {
+        obj.visible = false;
+        currentRoot.userData._hiddenBaseHair.push(obj);
+      }
+    });
+
+    // 新オーバーレイ髪マテリアルにベース色（ベース・影・リム・アウトライン）を適用
     if (baseColor) {
       const newHairMats = categorizeVRMMaterials().hair.filter(m => !baseMatsSet.has(m.uuid));
       newHairMats.forEach(m => {
         if (m.color) setMatColor(m, baseColor);
-        if (baseShade && m.shadeColorFactor) setColorObj(m.shadeColorFactor, baseShade);
-        if (baseRim && m.parametricRimColorFactor) setColorObj(m.parametricRimColorFactor, baseRim);
+        if (baseShade   && isMToon(m) && m.shadeColorFactor)           setColorObj(m.shadeColorFactor, baseShade);
+        if (baseRim     && isMToon(m) && m.parametricRimColorFactor)   setColorObj(m.parametricRimColorFactor, baseRim);
+        if (baseOutline && isMToon(m) && m.outlineColorFactor)         setColorObj(m.outlineColorFactor, baseOutline);
       });
     }
 
