@@ -90,6 +90,7 @@ export class KKCharacter {
     this.baseModel  = null;
     this.baseBoneMap = {};
     this.parts      = {};
+    this.accessories = {};
     this.onProgress = null;
   }
 
@@ -151,7 +152,47 @@ export class KKCharacter {
     });
   }
 
+  attachAccessory(id, mesh, transform = {}) {
+    this.detachAccessory(id);
+    const { pos = [0, 1.45, 0], rot = [0, 0, 0], scale = 1 } = transform;
+    mesh.position.set(...pos);
+    mesh.rotation.set(...rot);
+    mesh.scale.setScalar(scale);
+    this.root.add(mesh);
+    this.accessories[id] = { group: mesh };
+  }
+
+  detachAccessory(id) {
+    const acc = this.accessories[id];
+    if (!acc) return;
+    this.root.remove(acc.group);
+    acc.group.traverse(obj => {
+      obj.geometry?.dispose();
+      if (obj.material) {
+        (Array.isArray(obj.material) ? obj.material : [obj.material])
+          .forEach(m => m?.dispose());
+      }
+    });
+    delete this.accessories[id];
+  }
+
+  setHairShine(slot, params) {
+    const group = this.parts[slot];
+    if (!group) return;
+    group.traverse(obj => {
+      if (!obj.isMesh && !obj.isSkinnedMesh) return;
+      (Array.isArray(obj.material) ? obj.material : [obj.material]).forEach(m => {
+        if (!m) return;
+        if (params.roughness         !== undefined) m.roughness         = params.roughness;
+        if (params.metalness         !== undefined) m.metalness         = params.metalness;
+        if (params.envMapIntensity   !== undefined) m.envMapIntensity   = params.envMapIntensity;
+        m.needsUpdate = true;
+      });
+    });
+  }
+
   reset() {
+    Object.keys(this.accessories).forEach(id => this.detachAccessory(id));
     Object.keys(this.parts).forEach(slot => this.detach(slot));
     if (this.baseModel) {
       this.root.remove(this.baseModel);

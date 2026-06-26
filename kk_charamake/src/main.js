@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { KKCharacter } from './characterAssembler.js';
+import { HAIR_ACCESSORY_PRESETS, HAIR_SHINE_PRESETS, BASE_SHAPES, userAccessories } from './hairAccessorySystem.js';
 
 // ═══════════════════════════════════════════════════════════════
 //  ステータス / ローディング (UIより先に定義)
@@ -335,6 +336,7 @@ const CATEGORIES = {
       { key: 'hair_side',  label: '横髪',   type: 'parts', slot: 'hair_side', color: true,
         items: hairItems('hair_s', HAIR_S_IDS),
       },
+      { key: 'hair_acc_shine', label: '髪アクセ・ツヤ', type: 'hair_acc_shine' },
     ],
   },
   clothes: {
@@ -435,6 +437,24 @@ let currentCat = 'face';
 let currentSub = null;
 const uiState  = {};
 
+// ─── 髪アクセサリー状態 ──────────────────────────────────────
+const hairAccState = {
+  presetId: null,
+  target: 'hair_front',
+  color: '#ff88bb',
+  pos: [0.0, 1.45, 0.0],
+  rot: [0.0, 0.0, 0.0],
+  scale: 1.0,
+};
+
+// ─── 髪ツヤ状態 ───────────────────────────────────────────────
+const hairShineState = {
+  preset: 'normal',
+  roughness: 0.70,
+  metalness: 0.00,
+  envMapIntensity: 0.30,
+};
+
 // ═══════════════════════════════════════════════════════════════
 //  UI 描画
 // ═══════════════════════════════════════════════════════════════
@@ -483,6 +503,7 @@ function renderContent(sub) {
     case 'face_deco_panel': buildFaceDecoPanel(area);  break;
     case 'mole_panel':      buildMolePanel(area);      break;
     case 'tattoo_panel':    buildTattooPanel(area);    break;
+    case 'hair_acc_shine':  buildHairAccShinePanel(area); break;
     case 'ear_panel':       buildEarPanel(area);       break;
     case 'mouth_panel':     buildMouthPanel(area);     break;
     case 'neck_panel':      buildNeckPanel(area);      break;
@@ -4763,6 +4784,414 @@ function renderCustomGrid(grid) {
   });
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  髪アクセサリー・ツヤ パネル
+// ═══════════════════════════════════════════════════════════════
+
+const HAIR_SLOTS_SHINE = ['hair_front', 'hair_back', 'hair_ahoge', 'hair_side'];
+
+function _applyAccessory() {
+  if (!character) return;
+  character.detachAccessory('main');
+  if (!hairAccState.presetId) return;
+  const all = [...HAIR_ACCESSORY_PRESETS, ...userAccessories];
+  const preset = all.find(p => p.id === hairAccState.presetId);
+  if (!preset) return;
+  const mesh = preset.create(hairAccState.color);
+  character.attachAccessory('main', mesh, {
+    pos:   [...hairAccState.pos],
+    rot:   [...hairAccState.rot],
+    scale: hairAccState.scale,
+  });
+}
+
+function _updateAccessoryTransform() {
+  if (!character || !character.accessories.main) return;
+  const acc = character.accessories.main.group;
+  acc.position.set(...hairAccState.pos);
+  acc.rotation.set(...hairAccState.rot);
+  acc.scale.setScalar(hairAccState.scale);
+}
+
+function _applyHairShine() {
+  if (!character) return;
+  HAIR_SLOTS_SHINE.forEach(slot => character.setHairShine(slot, hairShineState));
+}
+
+function _buildTransformControls(area) {
+  area.innerHTML = '';
+  if (!hairAccState.presetId) return;
+
+  const sep = document.createElement('div');
+  sep.className = 'nose-sep'; sep.textContent = '位置・回転・スケール';
+  area.appendChild(sep);
+
+  const sliderDefs = [
+    { label: 'X 位置',  get: () => hairAccState.pos[0],      set: v => { hairAccState.pos[0] = v; _updateAccessoryTransform(); }, min: -0.20, max: 0.20, step: 0.002 },
+    { label: 'Y 位置',  get: () => hairAccState.pos[1],      set: v => { hairAccState.pos[1] = v; _updateAccessoryTransform(); }, min:  0.80, max: 1.80, step: 0.002 },
+    { label: 'Z 位置',  get: () => hairAccState.pos[2],      set: v => { hairAccState.pos[2] = v; _updateAccessoryTransform(); }, min: -0.20, max: 0.20, step: 0.002 },
+    { label: '回転 X',  get: () => Math.round(hairAccState.rot[0] * 180 / Math.PI), set: v => { hairAccState.rot[0] = v * Math.PI / 180; _updateAccessoryTransform(); }, min: -180, max: 180, step: 1 },
+    { label: '回転 Y',  get: () => Math.round(hairAccState.rot[1] * 180 / Math.PI), set: v => { hairAccState.rot[1] = v * Math.PI / 180; _updateAccessoryTransform(); }, min: -180, max: 180, step: 1 },
+    { label: '回転 Z',  get: () => Math.round(hairAccState.rot[2] * 180 / Math.PI), set: v => { hairAccState.rot[2] = v * Math.PI / 180; _updateAccessoryTransform(); }, min: -180, max: 180, step: 1 },
+    { label: 'サイズ',  get: () => hairAccState.scale,        set: v => { hairAccState.scale = v; _updateAccessoryTransform(); }, min: 0.10, max: 5.00, step: 0.05 },
+  ];
+
+  sliderDefs.forEach(sl => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;';
+    const lbl = document.createElement('span');
+    lbl.style.cssText = 'font-size:10px;color:var(--text-lo);width:52px;flex-shrink:0;';
+    lbl.textContent = sl.label;
+    const input = document.createElement('input');
+    input.type = 'range'; input.min = sl.min; input.max = sl.max; input.step = sl.step;
+    input.value = sl.get();
+    input.style.flex = '1';
+    const valSpan = document.createElement('span');
+    valSpan.style.cssText = 'font-size:10px;color:var(--text);width:40px;text-align:right;flex-shrink:0;';
+    valSpan.textContent = typeof sl.get() === 'number' && sl.step < 1 ? sl.get().toFixed(3) : sl.get();
+    input.addEventListener('input', () => {
+      const v = parseFloat(input.value);
+      valSpan.textContent = sl.step < 1 ? v.toFixed(3) : v;
+      sl.set(v);
+    });
+    row.appendChild(lbl); row.appendChild(input); row.appendChild(valSpan);
+    area.appendChild(row);
+  });
+}
+
+function _buildAccTab(area, refreshPanel) {
+  // 装着先セレクト
+  const tgtRow = document.createElement('div');
+  tgtRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:8px;';
+  const tgtLbl = document.createElement('span');
+  tgtLbl.style.cssText = 'font-size:11px;color:var(--text-lo);';
+  tgtLbl.textContent = '装着先：';
+  const tgtSel = document.createElement('select');
+  tgtSel.style.cssText = 'background:#12141e;color:var(--text);border:1px solid #252840;border-radius:4px;padding:2px 6px;font-size:11px;';
+  [{ value: 'hair_front', label: '前髪' }, { value: 'hair_back', label: '後ろ髪' },
+   { value: 'hair_side',  label: '横髪' }, { value: 'hair_ahoge', label: 'アホ毛' }]
+    .forEach(o => {
+      const opt = document.createElement('option');
+      opt.value = o.value; opt.textContent = o.label;
+      if (o.value === hairAccState.target) opt.selected = true;
+      tgtSel.appendChild(opt);
+    });
+  tgtSel.addEventListener('change', () => { hairAccState.target = tgtSel.value; });
+  tgtRow.appendChild(tgtLbl); tgtRow.appendChild(tgtSel);
+  area.appendChild(tgtRow);
+
+  // カラーピッカー
+  const colorRow = document.createElement('div');
+  colorRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:8px;';
+  const colorLbl = document.createElement('span');
+  colorLbl.style.cssText = 'font-size:11px;color:var(--text-lo);';
+  colorLbl.textContent = '色：';
+  const colorPicker = document.createElement('input');
+  colorPicker.type = 'color'; colorPicker.value = hairAccState.color;
+  colorPicker.style.cssText = 'width:36px;height:22px;border:none;background:none;cursor:pointer;';
+  colorPicker.addEventListener('input', () => {
+    hairAccState.color = colorPicker.value;
+    if (hairAccState.presetId) _applyAccessory();
+  });
+  colorRow.appendChild(colorLbl); colorRow.appendChild(colorPicker);
+  area.appendChild(colorRow);
+
+  // プリセットグリッド
+  const gridSep = document.createElement('div');
+  gridSep.className = 'nose-sep'; gridSep.textContent = 'プリセット';
+  area.appendChild(gridSep);
+
+  const grid = document.createElement('div');
+  grid.className = 'thumb-grid';
+
+  const transformArea = document.createElement('div');
+
+  const noneCell = document.createElement('div');
+  noneCell.className = 'thumb-item thumb-none' + (!hairAccState.presetId ? ' selected' : '');
+  noneCell.textContent = '×';
+  noneCell.addEventListener('click', () => {
+    hairAccState.presetId = null;
+    grid.querySelectorAll('.thumb-item').forEach(c => c.classList.remove('selected'));
+    noneCell.classList.add('selected');
+    character?.detachAccessory('main');
+    _buildTransformControls(transformArea);
+  });
+  grid.appendChild(noneCell);
+
+  [...HAIR_ACCESSORY_PRESETS, ...userAccessories].forEach(p => {
+    const cell = document.createElement('div');
+    cell.className = 'thumb-item' + (p.id === hairAccState.presetId ? ' selected' : '');
+    cell.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;padding:4px;';
+    const dot = document.createElement('div');
+    dot.style.cssText = `width:26px;height:26px;border-radius:50%;background:${p.defaultColor ?? '#aaaaaa'};border:1px solid #333;margin-bottom:2px;`;
+    const lbl = document.createElement('div');
+    lbl.className = 'thumb-label'; lbl.textContent = p.label;
+    cell.appendChild(dot); cell.appendChild(lbl);
+    cell.addEventListener('click', () => {
+      hairAccState.presetId = p.id;
+      hairAccState.color = p.defaultColor ?? hairAccState.color;
+      colorPicker.value = hairAccState.color;
+      grid.querySelectorAll('.thumb-item').forEach(c => c.classList.remove('selected'));
+      cell.classList.add('selected');
+      _applyAccessory();
+      _buildTransformControls(transformArea);
+    });
+    grid.appendChild(cell);
+  });
+  area.appendChild(grid);
+  area.appendChild(transformArea);
+  _buildTransformControls(transformArea);
+
+  // ユーザー作成
+  if (userAccessories.length > 0) {
+    const uSep = document.createElement('div');
+    uSep.className = 'nose-sep'; uSep.textContent = 'カスタム';
+    area.appendChild(uSep);
+  }
+}
+
+function _buildShineTab(area) {
+  // プリセットボタン
+  const pSep = document.createElement('div');
+  pSep.className = 'nose-sep'; pSep.textContent = 'プリセット';
+  area.appendChild(pSep);
+
+  const presetRow = document.createElement('div');
+  presetRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px;';
+
+  function markPresetBtn(activeKey) {
+    presetRow.querySelectorAll('button').forEach(b => {
+      const isActive = b.dataset.presetKey === activeKey;
+      b.style.background = isActive ? '#2a3050' : '';
+      b.style.borderColor = isActive ? 'var(--accent)' : '';
+      b.style.color = isActive ? 'var(--accent)' : '';
+    });
+  }
+
+  Object.entries(HAIR_SHINE_PRESETS).forEach(([key, preset]) => {
+    const btn = document.createElement('button');
+    btn.className = 'hbtn'; btn.dataset.presetKey = key;
+    btn.style.cssText = 'font-size:10px;padding:3px 9px;';
+    btn.textContent = preset.label;
+    btn.addEventListener('click', () => {
+      Object.assign(hairShineState, { preset: key, ...preset });
+      markPresetBtn(key);
+      syncSliders();
+      _applyHairShine();
+    });
+    presetRow.appendChild(btn);
+  });
+  // カスタムボタン
+  const customBtn = document.createElement('button');
+  customBtn.className = 'hbtn'; customBtn.dataset.presetKey = 'custom';
+  customBtn.style.cssText = 'font-size:10px;padding:3px 9px;';
+  customBtn.textContent = 'カスタム';
+  presetRow.appendChild(customBtn);
+  area.appendChild(presetRow);
+  markPresetBtn(hairShineState.preset);
+
+  // スライダー
+  const cSep = document.createElement('div');
+  cSep.className = 'nose-sep'; cSep.textContent = '詳細設定';
+  area.appendChild(cSep);
+
+  const slideDefs = [
+    { key: 'roughness',       label: '粗さ',    min: 0, max: 1, step: 0.01 },
+    { key: 'metalness',       label: '金属感',   min: 0, max: 1, step: 0.01 },
+    { key: 'envMapIntensity', label: '反射率',   min: 0, max: 2, step: 0.05 },
+  ];
+
+  const sliderInputs = {};
+
+  function syncSliders() {
+    slideDefs.forEach(sd => {
+      const inp = sliderInputs[sd.key];
+      if (!inp) return;
+      inp.value = hairShineState[sd.key] ?? 0;
+      inp.nextElementSibling.textContent = (hairShineState[sd.key] ?? 0).toFixed(2);
+    });
+  }
+
+  slideDefs.forEach(sd => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:5px;';
+    const lbl = document.createElement('span');
+    lbl.style.cssText = 'font-size:10px;color:var(--text-lo);width:56px;flex-shrink:0;';
+    lbl.textContent = sd.label;
+    const inp = document.createElement('input');
+    inp.type = 'range'; inp.min = sd.min; inp.max = sd.max; inp.step = sd.step;
+    inp.value = hairShineState[sd.key] ?? 0;
+    inp.style.flex = '1';
+    const valSpan = document.createElement('span');
+    valSpan.style.cssText = 'font-size:10px;color:var(--text);width:34px;text-align:right;flex-shrink:0;';
+    valSpan.textContent = (hairShineState[sd.key] ?? 0).toFixed(2);
+    inp.addEventListener('input', () => {
+      const v = parseFloat(inp.value);
+      hairShineState[sd.key] = v;
+      hairShineState.preset = 'custom';
+      valSpan.textContent = v.toFixed(2);
+      markPresetBtn('custom');
+      _applyHairShine();
+    });
+    sliderInputs[sd.key] = inp;
+    row.appendChild(lbl); row.appendChild(inp); row.appendChild(valSpan);
+    area.appendChild(row);
+  });
+}
+
+function _buildCreateTab(area) {
+  const sep = document.createElement('div');
+  sep.className = 'nose-sep'; sep.textContent = 'ベース形状を選択';
+  area.appendChild(sep);
+
+  let selShapeId = BASE_SHAPES[0].id;
+  let createColor = '#ff88bb';
+
+  const shapeGrid = document.createElement('div');
+  shapeGrid.className = 'thumb-grid';
+  BASE_SHAPES.forEach(shape => {
+    const cell = document.createElement('div');
+    cell.className = 'thumb-item' + (shape.id === selShapeId ? ' selected' : '');
+    cell.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;padding:4px;';
+    const lbl = document.createElement('div');
+    lbl.className = 'thumb-label'; lbl.textContent = shape.label;
+    cell.appendChild(lbl);
+    cell.addEventListener('click', () => {
+      selShapeId = shape.id;
+      shapeGrid.querySelectorAll('.thumb-item').forEach(c => c.classList.remove('selected'));
+      cell.classList.add('selected');
+    });
+    shapeGrid.appendChild(cell);
+  });
+  area.appendChild(shapeGrid);
+
+  // オプション行
+  const optRow = document.createElement('div');
+  optRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin:8px 0;';
+  const cLbl = document.createElement('span');
+  cLbl.style.cssText = 'font-size:11px;color:var(--text-lo);';
+  cLbl.textContent = '色：';
+  const cPicker = document.createElement('input');
+  cPicker.type = 'color'; cPicker.value = createColor;
+  cPicker.style.cssText = 'width:36px;height:22px;border:none;background:none;cursor:pointer;';
+  cPicker.addEventListener('input', () => { createColor = cPicker.value; });
+  optRow.appendChild(cLbl); optRow.appendChild(cPicker);
+  area.appendChild(optRow);
+
+  const nameRow = document.createElement('div');
+  nameRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:10px;';
+  const nLbl = document.createElement('span');
+  nLbl.style.cssText = 'font-size:11px;color:var(--text-lo);';
+  nLbl.textContent = '名前：';
+  const nameInp = document.createElement('input');
+  nameInp.type = 'text'; nameInp.value = 'カスタム';
+  nameInp.style.cssText = 'flex:1;background:#12141e;color:var(--text);border:1px solid #252840;border-radius:4px;padding:3px 6px;font-size:11px;';
+  nameRow.appendChild(nLbl); nameRow.appendChild(nameInp);
+  area.appendChild(nameRow);
+
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:6px;';
+
+  const previewBtn = document.createElement('button');
+  previewBtn.className = 'hbtn'; previewBtn.style.cssText = 'flex:1;font-size:11px;';
+  previewBtn.textContent = 'プレビュー';
+  previewBtn.addEventListener('click', () => {
+    if (!character) return;
+    const shape = BASE_SHAPES.find(s => s.id === selShapeId);
+    if (!shape) return;
+    character.detachAccessory('main');
+    character.attachAccessory('main', shape.create(createColor), {
+      pos: [...hairAccState.pos], rot: [...hairAccState.rot], scale: hairAccState.scale,
+    });
+  });
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'hbtn';
+  saveBtn.style.cssText = 'flex:1;font-size:11px;background:rgba(80,200,100,0.1);border-color:rgba(80,200,100,0.4);';
+  saveBtn.textContent = '保存して登録';
+  saveBtn.addEventListener('click', () => {
+    const shape = BASE_SHAPES.find(s => s.id === selShapeId);
+    if (!shape) return;
+    const label = nameInp.value.trim() || `カスタム${userAccessories.length + 1}`;
+    const id = `user_${Date.now()}`;
+    const capturedShapeId = selShapeId;
+    const capturedColor = createColor;
+    userAccessories.push({
+      id,
+      label,
+      defaultColor: capturedColor,
+      create: c => BASE_SHAPES.find(s => s.id === capturedShapeId)?.create(c) ?? new THREE.Group(),
+      _userDef: { id, label, baseShapeId: capturedShapeId, color: capturedColor },
+    });
+    alert(`「${label}」をアクセサリー一覧に追加しました。`);
+  });
+
+  btnRow.appendChild(previewBtn); btnRow.appendChild(saveBtn);
+  area.appendChild(btnRow);
+
+  // カスタム保存済み一覧
+  if (userAccessories.length > 0) {
+    const dlSep = document.createElement('div');
+    dlSep.className = 'nose-sep'; dlSep.textContent = `カスタム登録済み (${userAccessories.length}件)`;
+    area.appendChild(dlSep);
+    const dlBtn = document.createElement('button');
+    dlBtn.className = 'hbtn';
+    dlBtn.style.cssText = 'width:100%;font-size:11px;margin-top:4px;';
+    dlBtn.textContent = 'JSONで書き出し';
+    dlBtn.addEventListener('click', () => {
+      const data = userAccessories.map(a => a._userDef);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: 'hair_accessories.json' });
+      a.click(); URL.revokeObjectURL(a.href);
+    });
+    area.appendChild(dlBtn);
+  }
+}
+
+function buildHairAccShinePanel(area) {
+  area.innerHTML = '';
+
+  const TAB_DEFS = [
+    { key: 'acc',    label: 'アクセサリー',   build: a => _buildAccTab(a)    },
+    { key: 'shine',  label: 'ツヤ設定',        build: a => _buildShineTab(a)  },
+    { key: 'create', label: '3Dアクセ作成',    build: a => _buildCreateTab(a) },
+  ];
+  let activeTabKey = 'acc';
+
+  const tabRow = document.createElement('div');
+  tabRow.style.cssText = 'display:flex;gap:3px;margin-bottom:10px;flex-wrap:wrap;';
+  area.appendChild(tabRow);
+
+  const contentWrap = document.createElement('div');
+  area.appendChild(contentWrap);
+
+  const tabContents = {};
+  TAB_DEFS.forEach(t => {
+    const content = document.createElement('div');
+    tabContents[t.key] = content;
+    content.style.display = t.key === activeTabKey ? '' : 'none';
+    contentWrap.appendChild(content);
+
+    const btn = document.createElement('button');
+    btn.className = 'sub-tab' + (t.key === activeTabKey ? ' active' : '');
+    btn.style.cssText = 'font-size:10px;padding:3px 8px;';
+    btn.textContent = t.label;
+    btn.addEventListener('click', () => {
+      activeTabKey = t.key;
+      tabRow.querySelectorAll('.sub-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      Object.values(tabContents).forEach(c => { c.style.display = 'none'; });
+      content.style.display = '';
+      if (!content._built) { t.build(content); content._built = true; }
+    });
+    tabRow.appendChild(btn);
+  });
+
+  // 初期タブをビルド
+  const initDef = TAB_DEFS.find(t => t.key === activeTabKey);
+  if (initDef) { initDef.build(tabContents[activeTabKey]); tabContents[activeTabKey]._built = true; }
+}
+
 function buildColorPanel(slot) {
   const swRow = document.getElementById('color-swatches-main');
   if (!swRow) return;
@@ -4789,9 +5218,23 @@ function buildColorPanel(slot) {
 // ═══════════════════════════════════════════════════════════════
 function saveJSON() {
   const data = {
-    version: 1,
+    version: 2,
     name: document.getElementById('chara-name')?.value || '新しいキャラ',
     state: { ...uiState },
+    hairAcc: {
+      presetId: hairAccState.presetId,
+      target:   hairAccState.target,
+      color:    hairAccState.color,
+      pos:      [...hairAccState.pos],
+      rot:      [...hairAccState.rot],
+      scale:    hairAccState.scale,
+    },
+    hairShine: {
+      preset:          hairShineState.preset,
+      roughness:       hairShineState.roughness,
+      metalness:       hairShineState.metalness,
+      envMapIntensity: hairShineState.envMapIntensity,
+    },
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = Object.assign(document.createElement('a'), {
@@ -4846,6 +5289,25 @@ async function applyLoadedData(d) {
       if (item) await character.attach(slot, item.url);
     }
   }
+
+  // 髪アクセサリー復元
+  if (d.hairAcc) {
+    const ha = d.hairAcc;
+    hairAccState.presetId = ha.presetId ?? null;
+    hairAccState.target   = ha.target   ?? 'hair_front';
+    hairAccState.color    = ha.color    ?? '#ff88bb';
+    hairAccState.pos      = Array.isArray(ha.pos) ? [...ha.pos] : [0, 1.45, 0];
+    hairAccState.rot      = Array.isArray(ha.rot) ? [...ha.rot] : [0, 0, 0];
+    hairAccState.scale    = ha.scale    ?? 1.0;
+    _applyAccessory();
+  }
+
+  // 髪ツヤ復元
+  if (d.hairShine) {
+    Object.assign(hairShineState, d.hairShine);
+    _applyHairShine();
+  }
+
   setLoading(false);
   renderSubTabs(currentCat);
 }
