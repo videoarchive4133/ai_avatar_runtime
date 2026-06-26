@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { KKCharacter } from './characterAssembler.js';
 import { HAIR_ACCESSORY_PRESETS, HAIR_SHINE_PRESETS, BASE_SHAPES, userAccessories } from './hairAccessorySystem.js';
-import { EyeController } from './faceControllers.js';
+import { FaceEditor } from './faceControllers.js';
 
 // ═══════════════════════════════════════════════════════════════
 //  ステータス / ローディング (UIより先に定義)
@@ -457,17 +457,9 @@ const hairShineState = {
   envMapIntensity: 0.30,
 };
 
-// ─── 目調整状態 ───────────────────────────────────────────────
-const _EYE_PARAMS_DEFAULT = () => ({ scale: 0, posX: 0, posY: 0, posZ: 0, rotation: 0 });
-const eyeState = {
-  syncLR: true,
-  both:  _EYE_PARAMS_DEFAULT(),
-  left:  _EYE_PARAMS_DEFAULT(),
-  right: _EYE_PARAMS_DEFAULT(),
-};
-
-// EyeController インスタンス（head attach 後に init()）
-let eyeController = null;
+// ─── 顔パーツ編集（FaceEditor） ──────────────────────────────
+// head attach 後に faceEditor.reinitForHead() で初期化する
+let faceEditor = null;
 
 // ═══════════════════════════════════════════════════════════════
 //  UI 描画
@@ -553,8 +545,8 @@ function buildPartsGrid(area, sub) {
             _setGroupVisible(character.parts[sub.slot], false);
           }
           // head を付け替えたら目コントローラを再初期化して調整値を再適用
-          if (sub.slot === 'head' && eyeController) {
-            eyeController.init();
+          if (sub.slot === 'head' && faceEditor) {
+            faceEditor.reinitForHead();
             _applyEyeState();
           }
         }).finally(() => setLoading(false));
@@ -690,28 +682,18 @@ const EYE_SLIDERS = [
   { key: 'rotation', label: '回転',       min: -180, max: 180, step: 1 },
 ];
 
-function _initEyeControllerIfNeeded() {
-  if (!eyeController) {
-    eyeController = new EyeController(character);
-  }
-  if (character?.parts['head']) {
-    eyeController.init();
-  }
+function _initFaceEditorIfNeeded() {
+  if (!faceEditor) faceEditor = new FaceEditor(character);
+  if (character?.parts['head']) faceEditor.eye.init();
 }
 
 function _applyEyeState() {
-  if (!eyeController) return;
-  if (eyeState.syncLR) {
-    eyeController.apply(eyeState.both, 'both');
-  } else {
-    eyeController.apply(eyeState.left,  'left');
-    eyeController.apply(eyeState.right, 'right');
-  }
+  faceEditor?.eye.applyState();
 }
 
 function _buildEyeSlidersSection(area, side) {
   // side: 'both' | 'left' | 'right'
-  const params = eyeState[side];
+  const params = faceEditor.eye.getState()[side];
 
   EYE_SLIDERS.forEach(sl => {
     const row = document.createElement('div');
@@ -745,7 +727,8 @@ function _buildEyeSlidersSection(area, side) {
 function buildEyeAdjustPanel(area) {
   area.innerHTML = '';
 
-  _initEyeControllerIfNeeded();
+  _initFaceEditorIfNeeded();
+  const eyeState = faceEditor.eye.getState(); // ライブ参照
 
   // ── 左右同時編集チェックボックス ──────────────────────────
   const syncRow = document.createElement('div');
@@ -802,10 +785,7 @@ function buildEyeAdjustPanel(area) {
   resetBtn.style.marginTop = '10px';
   resetBtn.textContent  = '目調整リセット';
   resetBtn.addEventListener('click', () => {
-    eyeState.both  = _EYE_PARAMS_DEFAULT();
-    eyeState.left  = _EYE_PARAMS_DEFAULT();
-    eyeState.right = _EYE_PARAMS_DEFAULT();
-    eyeController?.reset('both');
+    faceEditor.eye.resetState();
     renderSliders();
   });
   area.appendChild(resetBtn);
@@ -5372,7 +5352,7 @@ function buildColorPanel(slot) {
 // ═══════════════════════════════════════════════════════════════
 function saveJSON() {
   const data = {
-    version: 3,
+    version: 4,
     name: document.getElementById('chara-name')?.value || '新しいキャラ',
     state: { ...uiState },
     hairAcc: {
@@ -5389,12 +5369,7 @@ function saveJSON() {
       metalness:       hairShineState.metalness,
       envMapIntensity: hairShineState.envMapIntensity,
     },
-    eye: {
-      syncLR: eyeState.syncLR,
-      both:   { ...eyeState.both  },
-      left:   { ...eyeState.left  },
-      right:  { ...eyeState.right },
-    },
+    face: faceEditor ? faceEditor.serialize() : {},
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = Object.assign(document.createElement('a'), {
@@ -5448,10 +5423,10 @@ async function applyLoadedData(d) {
     for (const [slot, item] of Object.entries(slots)) {
       if (item) await character.attach(slot, item.url);
     }
-    // head ロード後に目コントローラ初期化
+    // head ロード後に FaceEditor 初期化
     if (slots.head) {
-      if (!eyeController) eyeController = new EyeController(character);
-      eyeController.init();
+      if (!faceEditor) faceEditor = new FaceEditor(character);
+      faceEditor.reinitForHead();
     }
   }
 
@@ -5473,13 +5448,12 @@ async function applyLoadedData(d) {
     _applyHairShine();
   }
 
-  // 目調整復元
-  if (d.eye) {
-    eyeState.syncLR = d.eye.syncLR ?? true;
-    if (d.eye.both)  Object.assign(eyeState.both,  d.eye.both);
-    if (d.eye.left)  Object.assign(eyeState.left,  d.eye.left);
-    if (d.eye.right) Object.assign(eyeState.right, d.eye.right);
-    if (eyeController) _applyEyeState();
+  // 顔調整復元 (v4: d.face / v3以前: d.eye → 自動変換して後方互換)
+  const faceData = d.face ?? (d.eye ? { eye: d.eye } : null);
+  if (faceData) {
+    if (!faceEditor) faceEditor = new FaceEditor(character);
+    faceEditor.deserialize(faceData);
+    faceEditor.eye.applyState();
   }
 
   setLoading(false);

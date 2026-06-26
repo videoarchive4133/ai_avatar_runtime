@@ -1,6 +1,22 @@
 import * as THREE from 'three';
 
 // ═══════════════════════════════════════════════════════════════
+//  共通パラメータデフォルト値
+// ═══════════════════════════════════════════════════════════════
+export function makeFaceParams(overrides = {}) {
+  return {
+    scale:     0,
+    positionX: 0,
+    positionY: 0,
+    positionZ: 0,
+    rotationX: 0,
+    rotationY: 0,
+    rotationZ: 0,
+    ...overrides,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  FacePartController  — 顔パーツ操作の共通基底クラス
 //
 //  継承して使うことで EyebrowController / NoseController /
@@ -14,17 +30,22 @@ import * as THREE from 'three';
 export class FacePartController {
   constructor(character) {
     this.character = character;
-    this._bonesL  = {};   // boneName → THREE.Bone
+    this._bonesL  = {};
     this._bonesR  = {};
-    this._restL   = {};   // boneName → { pos: Vector3, rot: Euler, scale: Vector3 }
+    this._restL   = {};
     this._restR   = {};
     this.centerL  = new THREE.Vector3();
     this.centerR  = new THREE.Vector3();
+    this._params  = {};
   }
 
   // ── サブクラスでオーバーライド ──────────────────────────────
   get boneNamesL() { return []; }
   get boneNamesR() { return []; }
+
+  // ── 汎用パラメータ setter / getter ─────────────────────────
+  setValue(name, value) { this._params[name] = value; }
+  getValue(name)        { return this._params[name];  }
 
   // ── 初期化：head パーツが attach されたあとに呼ぶ ──────────
   init() {
@@ -65,14 +86,11 @@ export class FacePartController {
   }
 
   // ── 変形適用 ────────────────────────────────────────────────
-  // params: { scale, posX, posY, posZ, rotation }  値はすべて -100〜100 (rotation は -180〜180°)
-  // side  : 'both' | 'left' | 'right'
   apply(params, side = 'both') {
     if (side === 'both' || side === 'left')  this._applySide('L', params);
     if (side === 'both' || side === 'right') this._applySide('R', params);
   }
 
-  // サブクラスでオーバーライド
   _applySide(_side, _params) {}
 
   // ── 初期状態へ戻す ─────────────────────────────────────────
@@ -92,6 +110,10 @@ export class FacePartController {
     if (side === 'both' || side === 'left')  doSide('L');
     if (side === 'both' || side === 'right') doSide('R');
   }
+
+  // ── 保存 / 復元 ─────────────────────────────────────────────
+  serialize()          { return { ...this._params }; }
+  deserialize(_data)   {}
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -109,10 +131,69 @@ export class FacePartController {
 // ═══════════════════════════════════════════════════════════════
 const EYE_BONE_SUFFIXES = ['_rz', '01_s', '02_s', '03_s', '04_s', '05_s', '06_s', '07_s', '08_s'];
 
+function _eyeParamsDefault() {
+  return { scale: 0, posX: 0, posY: 0, posZ: 0, rotation: 0 };
+}
+
 export class EyeController extends FacePartController {
+  constructor(character) {
+    super(character);
+    // 目調整の UI 状態（左右同時 / 個別）
+    this._state = {
+      syncLR: true,
+      both:   _eyeParamsDefault(),
+      left:   _eyeParamsDefault(),
+      right:  _eyeParamsDefault(),
+    };
+  }
+
   get boneNamesL() { return EYE_BONE_SUFFIXES.map(s => `cf_J_Eye${s}_L`); }
   get boneNamesR() { return EYE_BONE_SUFFIXES.map(s => `cf_J_Eye${s}_R`); }
 
+  // ── 状態アクセサ ─────────────────────────────────────────────
+  // UI コードが直接変異できるよう、ライブ参照を返す
+  getState() { return this._state; }
+
+  setValue(name, value) { this._state[name] = value; }
+  getValue(name)        { return this._state[name];  }
+
+  // ── 現在の _state を 3D へ適用 ──────────────────────────────
+  applyState() {
+    if (this._state.syncLR) {
+      this.apply(this._state.both, 'both');
+    } else {
+      this.apply(this._state.left,  'left');
+      this.apply(this._state.right, 'right');
+    }
+  }
+
+  // ── 全パラメータをデフォルトに戻す ─────────────────────────
+  resetState() {
+    this._state.both  = _eyeParamsDefault();
+    this._state.left  = _eyeParamsDefault();
+    this._state.right = _eyeParamsDefault();
+    this.reset('both');
+  }
+
+  // ── 保存 / 復元 ─────────────────────────────────────────────
+  serialize() {
+    return {
+      syncLR: this._state.syncLR,
+      both:   { ...this._state.both  },
+      left:   { ...this._state.left  },
+      right:  { ...this._state.right },
+    };
+  }
+
+  deserialize(data) {
+    if (!data) return;
+    this._state.syncLR = data.syncLR ?? true;
+    if (data.both)  Object.assign(this._state.both,  data.both);
+    if (data.left)  Object.assign(this._state.left,  data.left);
+    if (data.right) Object.assign(this._state.right, data.right);
+  }
+
+  // ── ボーン変形ロジック（変更不可） ─────────────────────────
   _applySide(side, params) {
     const bones  = side === 'L' ? this._bonesL : this._bonesR;
     const rests  = side === 'L' ? this._restL  : this._restR;
@@ -121,10 +202,9 @@ export class EyeController extends FacePartController {
     // X 軸方向は左右で反転（左右対称になるよう）
     const xSign = side === 'R' ? -1 : 1;
 
-    // 係数変換
     // scale: 0=等倍, +100=約2.2倍, -100=約0.1倍（最小0.05にクランプ）
     const scaleFactor = Math.max(0.05, 1.0 + (params.scale ?? 0) * 0.012);
-    const dx    = (params.posX     ?? 0) * xSign * 0.0004;   // ±100 → ±0.04 units
+    const dx    = (params.posX     ?? 0) * xSign * 0.0004;
     const dy    = (params.posY     ?? 0) * 0.0004;
     const dz    = (params.posZ     ?? 0) * 0.0004;
     const rotRad = (params.rotation ?? 0) * (Math.PI / 180) * xSign;
@@ -152,5 +232,68 @@ export class EyeController extends FacePartController {
       bone.position.set(px + dx, py + dy, pz + dz);
       bone.rotation.copy(rest.rot);
     }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FaceEditor  — 全顔パーツコントローラーの統合管理クラス
+//
+//  使い方:
+//    const faceEditor = new FaceEditor(character);
+//    faceEditor.reinitForHead();           // head 付け替え後
+//    faceEditor.eye.getState().syncLR = false;  // UI から変更
+//    faceEditor.eye.applyState();          // 3D へ反映
+//    const json = faceEditor.serialize();  // 保存
+//    faceEditor.deserialize(json);         // 復元
+//
+//  将来の追加方法:
+//    class EyebrowController extends FacePartController { ... }
+//    // FaceEditor コンストラクタに this.eyebrow = new EyebrowController(character) を追加
+//    // reinitForHead / serialize / deserialize / reset に eyebrow を追加するだけ
+// ═══════════════════════════════════════════════════════════════
+export class FaceEditor {
+  constructor(character) {
+    this.character = character;
+    this.eye       = new EyeController(character);
+    // ── 将来実装予定 ────────────────────────────────────────────
+    // this.eyebrow   = new EyebrowController(character);
+    // this.nose      = new NoseController(character);
+    // this.mouth     = new MouthController(character);
+    // this.faceShape = new FaceShapeController(character);
+    // this.ear       = new EarController(character);
+  }
+
+  // head が付け替えられたあとに呼ぶ（ボーン参照を更新）
+  reinitForHead() {
+    this.eye.init();
+    // 将来: this.eyebrow.init(); this.nose.init(); ...
+  }
+
+  // 全パーツの調整値を 3D へ一括適用
+  applyAll() {
+    this.eye.applyState();
+    // 将来: this.eyebrow.applyState(); ...
+  }
+
+  // 指定パーツ（省略時は全パーツ）をリセット
+  reset(partName) {
+    if (!partName || partName === 'eye') this.eye.resetState();
+    // 将来: if (!partName || partName === 'eyebrow') this.eyebrow.resetState();
+  }
+
+  // JSON 保存用シリアライズ
+  // → { eye: {...}, eyebrow: {...}, ... }
+  serialize() {
+    return {
+      eye: this.eye.serialize(),
+      // 将来: eyebrow: this.eyebrow.serialize(), ...
+    };
+  }
+
+  // JSON 読込復元
+  deserialize(data) {
+    if (!data) return;
+    if (data.eye) this.eye.deserialize(data.eye);
+    // 将来: if (data.eyebrow) this.eyebrow.deserialize(data.eyebrow);
   }
 }
