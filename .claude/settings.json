@@ -26,7 +26,13 @@
       "Bash(pip3 install *)",
       "Bash(gh repo *)",
       "Bash(rm -rf .git && git init && git remote add origin https://videoarchive4133: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@github.com/videoarchive4133/ai_avatar_runtime.git && echo \"done\")",
-      "Bash(git reset *)"
+      "Bash(git reset *)",
+      "Bash(awk '{print $1, $2, $11}')",
+      "Bash(sudo tee /etc/sysctl.d/99-inotify.conf)",
+      "Bash(sudo sysctl -p /etc/sysctl.d/99-inotify.conf)",
+      "Bash(WEBKIT_DISABLE_COMPOSITING_MODE=1 /home/k/Desktop/ai_avatar_runtime/kk_charamake/src-tauri/target/debug/app)",
+      "Bash(grep -E \"WebKit|kk.charamake|app$\")",
+      "Bash(WEBKIT_DISABLE_COMPOSITING_MODE=1 DISPLAY=:0 /home/k/Desktop/ai_avatar_runtime/kk_charamake/src-tauri/target/debug/app)"
     ],
     "additionalDirectories": [
       "/home/k/Desktop/ai_avatar_runtime/.git"
