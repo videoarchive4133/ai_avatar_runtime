@@ -6,6 +6,7 @@ import { FaceEditor, ExpressionController, EXPRESSION_PRESETS } from './faceCont
 import { PoseController, POSE_PRESETS, POSE_BONE_GROUPS } from './poseController.js';
 import { MotionController, MOTION_PRESETS, EASING_TYPES } from './motionController.js';
 import { CameraLightController, CAMERA_PRESETS, LIGHT_PRESETS } from './cameraLightController.js';
+import { SceneController, BACKGROUND_PRESETS, PROP_TYPES } from './sceneController.js';
 
 // ═══════════════════════════════════════════════════════════════
 //  ステータス / ローディング (UIより先に定義)
@@ -455,6 +456,12 @@ const CATEGORIES = {
       { key: 'camera_light', label: 'カメラ・ライト', type: 'camera_light_panel' },
     ],
   },
+  scene: {
+    label: 'シーン',
+    subs: [
+      { key: 'scene_editor', label: 'シーンエディタ', type: 'scene_panel' },
+    ],
+  },
   param: {
     label: '設定',
     subs: [
@@ -506,6 +513,8 @@ let poseController = null;
 let motionController = null;
 // ─── カメラ・ライトコントローラー ──────────────────────────────
 let cameraLightController = null;
+// ─── シーンコントローラー ───────────────────────────────────────
+let sceneController = null;
 
 // ═══════════════════════════════════════════════════════════════
 //  UI 描画
@@ -561,6 +570,7 @@ function renderContent(sub) {
     case 'pose_panel':           buildPosePanel(area);          break;
     case 'motion_panel':         buildMotionPanel(area);        break;
     case 'camera_light_panel':  buildCameraLightPanel(area);   break;
+    case 'scene_panel':         buildScenePanel(area);         break;
     case 'face_deco_panel': buildFaceDecoPanel(area);  break;
     case 'mole_panel':      buildMolePanel(area);      break;
     case 'tattoo_panel':    buildTattooPanel(area);    break;
@@ -6230,6 +6240,242 @@ function buildCameraLightPanel(area) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  シーンエディタ
+// ═══════════════════════════════════════════════════════════════
+function _initSceneIfNeeded() {
+  if (!sceneController && scene) {
+    sceneController = new SceneController({ scene, floorMesh, gridHelper });
+  }
+}
+
+function buildScenePanel(area) {
+  area.innerHTML = '';
+  _initSceneIfNeeded();
+  const sc = sceneController;
+  if (!sc) { area.textContent = '3Dビューポート未初期化'; return; }
+
+  const st = sc.getState();
+
+  // ── ヘルパー ──────────────────────────────────────────────
+  function sep(label) {
+    const d = document.createElement('div');
+    d.className = 'panel-section-label';
+    d.textContent = label;
+    area.appendChild(d);
+  }
+
+  function numSlider(label, min, max, step, value, onChange) {
+    const row = document.createElement('div');
+    row.className = 'slider-row';
+    const lbl = document.createElement('span');
+    lbl.className = 'slider-label';
+    lbl.textContent = label;
+    const sl = document.createElement('input');
+    sl.type = 'range'; sl.min = min; sl.max = max; sl.step = step; sl.value = value;
+    const val = document.createElement('span');
+    val.className = 'slider-value';
+    val.textContent = value;
+    sl.addEventListener('input', () => { val.textContent = sl.value; onChange(parseFloat(sl.value)); });
+    row.append(lbl, sl, val);
+    area.appendChild(row);
+    return sl;
+  }
+
+  function checkbox(label, checked, onChange) {
+    const row = document.createElement('div');
+    row.className = 'slider-row';
+    const lbl = document.createElement('label');
+    lbl.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#aab0c8;';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = checked;
+    cb.addEventListener('change', () => onChange(cb.checked));
+    lbl.append(cb, document.createTextNode(label));
+    row.appendChild(lbl);
+    area.appendChild(row);
+    return cb;
+  }
+
+  // ── 背景プリセット ────────────────────────────────────────
+  sep('■ 背景プリセット');
+  const bgGrid = document.createElement('div');
+  bgGrid.style.cssText = 'display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:8px;';
+  BACKGROUND_PRESETS.forEach(preset => {
+    const btn = document.createElement('button');
+    btn.className = 'preset-btn' + (st.backgroundPreset === preset.id ? ' active' : '');
+    btn.textContent = preset.label;
+    btn.style.fontSize = '10px';
+    btn.addEventListener('click', () => {
+      sc.setBackgroundPreset(preset.id);
+      bgGrid.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+    bgGrid.appendChild(btn);
+  });
+  area.appendChild(bgGrid);
+
+  // ── 床設定 ────────────────────────────────────────────────
+  sep('■ 床設定');
+  checkbox('床を表示', st.floor.enabled, v => sc.setFloorValue('enabled', v));
+
+  const colorRow = document.createElement('div');
+  colorRow.className = 'slider-row';
+  const colorLbl = document.createElement('span');
+  colorLbl.className = 'slider-label';
+  colorLbl.textContent = '床の色';
+  const colorPick = document.createElement('input');
+  colorPick.type = 'color'; colorPick.value = st.floor.color;
+  colorPick.style.cssText = 'width:40px;height:24px;border:none;background:none;cursor:pointer;';
+  colorPick.addEventListener('input', () => sc.setFloorValue('color', colorPick.value));
+  colorRow.append(colorLbl, colorPick);
+  area.appendChild(colorRow);
+
+  numSlider('床の粗さ', 0, 1, 0.05, st.floor.roughness, v => sc.setFloorValue('roughness', v));
+  numSlider('床の反射', 0, 1, 0.05, st.floor.reflection, v => sc.setFloorValue('reflection', v));
+  checkbox('グリッドを表示', st.floor.grid, v => sc.setFloorValue('grid', v));
+
+  // ── 小物配置 ──────────────────────────────────────────────
+  sep('■ 小物配置');
+
+  // 追加ボタン (5×2 グリッド)
+  const addGrid = document.createElement('div');
+  addGrid.style.cssText = 'display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:10px;';
+  PROP_TYPES.forEach(pt => {
+    const btn = document.createElement('button');
+    btn.className = 'preset-btn';
+    btn.textContent = pt.label;
+    btn.style.fontSize = '10px';
+    btn.addEventListener('click', () => {
+      sc.addProp(pt.id);
+      rebuildPropList();
+    });
+    addGrid.appendChild(btn);
+  });
+  area.appendChild(addGrid);
+
+  // 小物リスト
+  const propListEl = document.createElement('div');
+  propListEl.id = 'scene-prop-list';
+  area.appendChild(propListEl);
+
+  function rebuildPropList() {
+    propListEl.innerHTML = '';
+    const props = sc.getState().props;
+    if (props.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'font-size:11px;color:#555;text-align:center;padding:8px;';
+      empty.textContent = '小物がありません';
+      propListEl.appendChild(empty);
+      return;
+    }
+    props.forEach(prop => {
+      const typeLabel = PROP_TYPES.find(t => t.id === prop.type)?.label ?? prop.type;
+
+      const card = document.createElement('div');
+      card.style.cssText = 'border:1px solid #252840;border-radius:6px;margin-bottom:8px;overflow:hidden;';
+
+      // ヘッダー
+      const hdr = document.createElement('div');
+      hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:6px 8px;background:#1a1d30;cursor:pointer;';
+      const titleEl = document.createElement('span');
+      titleEl.style.cssText = 'font-size:12px;color:#c8d0f0;font-weight:600;';
+      titleEl.textContent = `${typeLabel} (${prop.id})`;
+      const delBtn = document.createElement('button');
+      delBtn.className = 'hbtn red';
+      delBtn.style.cssText = 'font-size:10px;padding:2px 6px;';
+      delBtn.textContent = '削除';
+      delBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        sc.removeProp(prop.id);
+        rebuildPropList();
+      });
+      const toggleBtn = document.createElement('span');
+      toggleBtn.style.cssText = 'font-size:11px;color:#666;margin-left:6px;';
+      toggleBtn.textContent = '▼';
+      hdr.append(titleEl, delBtn, toggleBtn);
+
+      // ボディ（折りたたみ）
+      const body = document.createElement('div');
+      body.style.cssText = 'padding:8px;display:none;';
+
+      let expanded = false;
+      hdr.addEventListener('click', () => {
+        expanded = !expanded;
+        body.style.display = expanded ? 'block' : 'none';
+        toggleBtn.textContent = expanded ? '▲' : '▼';
+      });
+
+      // スライダー生成ヘルパー（ローカル）
+      function propSlider(parent, label, min, max, step, value, onChange) {
+        const row = document.createElement('div');
+        row.className = 'slider-row';
+        const lbl = document.createElement('span');
+        lbl.className = 'slider-label';
+        lbl.textContent = label;
+        const sl = document.createElement('input');
+        sl.type = 'range'; sl.min = min; sl.max = max; sl.step = step; sl.value = value;
+        const val = document.createElement('span');
+        val.className = 'slider-value';
+        val.textContent = value;
+        sl.addEventListener('input', () => { val.textContent = sl.value; onChange(parseFloat(sl.value)); });
+        row.append(lbl, sl, val);
+        parent.appendChild(row);
+      }
+
+      // 位置
+      const posLbl = document.createElement('div');
+      posLbl.style.cssText = 'font-size:11px;color:#888;margin:4px 0 2px;';
+      posLbl.textContent = '位置';
+      body.appendChild(posLbl);
+      ['X','Y','Z'].forEach((ax, i) => {
+        propSlider(body, `  ${ax}`, -3, 3, 0.05, prop.position[i], v => {
+          const pos = [...sc.getState().props.find(p=>p.id===prop.id).position];
+          pos[i] = v;
+          sc.setPropTransform(prop.id, { position: pos });
+        });
+      });
+
+      // 回転
+      const rotLbl = document.createElement('div');
+      rotLbl.style.cssText = 'font-size:11px;color:#888;margin:4px 0 2px;';
+      rotLbl.textContent = '回転 (度)';
+      body.appendChild(rotLbl);
+      ['X','Y','Z'].forEach((ax, i) => {
+        propSlider(body, `  ${ax}`, -180, 180, 1, prop.rotation[i], v => {
+          const rot = [...sc.getState().props.find(p=>p.id===prop.id).rotation];
+          rot[i] = v;
+          sc.setPropTransform(prop.id, { rotation: rot });
+        });
+      });
+
+      // スケール
+      const sclLbl = document.createElement('div');
+      sclLbl.style.cssText = 'font-size:11px;color:#888;margin:4px 0 2px;';
+      sclLbl.textContent = 'スケール';
+      body.appendChild(sclLbl);
+      propSlider(body, '', 0.1, 5, 0.1, prop.scale, v => {
+        sc.setPropTransform(prop.id, { scale: v });
+      });
+
+      card.append(hdr, body);
+      propListEl.appendChild(card);
+    });
+  }
+
+  rebuildPropList();
+
+  // ── リセットボタン ────────────────────────────────────────
+  const resetBtn = document.createElement('button');
+  resetBtn.className = 'hbtn';
+  resetBtn.style.marginTop = '12px';
+  resetBtn.textContent = 'シーンリセット';
+  resetBtn.addEventListener('click', () => {
+    sc.reset();
+    buildScenePanel(area);
+  });
+  area.appendChild(resetBtn);
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  モーションエディタ
 // ═══════════════════════════════════════════════════════════════
 function _initMotionIfNeeded() {
@@ -6631,6 +6877,7 @@ function saveJSON() {
     pose:        poseController        ? poseController.serialize()        : null,
     motion:      motionController      ? motionController.serialize()      : null,
     cameraLight: cameraLightController ? cameraLightController.serialize() : null,
+    scene:       sceneController       ? sceneController.serialize()       : null,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = Object.assign(document.createElement('a'), {
@@ -6755,6 +7002,12 @@ async function applyLoadedData(d) {
     if (cameraLightController) cameraLightController.deserialize(d.cameraLight);
   }
 
+  // シーン復元（scene キーがない古いデータはスキップ）
+  if (d.scene) {
+    _initSceneIfNeeded();
+    if (sceneController) sceneController.deserialize(d.scene);
+  }
+
   setLoading(false);
   renderSubTabs(currentCat);
 }
@@ -6775,6 +7028,8 @@ async function initAll() {
   motionController = null;
   cameraLightController?.reset();
   cameraLightController = null;
+  sceneController?.reset();
+  sceneController = null;
   character?.reset();
   Object.keys(uiState).forEach(k => delete uiState[k]);
   await initCharacter();
