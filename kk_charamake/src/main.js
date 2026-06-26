@@ -305,8 +305,9 @@ const CATEGORIES = {
       { key: 'face_deco', label: '顔デコ',  type: 'face_deco_panel' },
       { key: 'mole',      label: 'ほくろ',  type: 'mole_panel' },
       { key: 'tattoo',    label: 'タトゥー', type: 'tattoo_panel' },
-      { key: 'ear_acc',   label: '耳アクセ', type: 'ear_panel' },
-      { key: 'mouth',     label: '口元',     type: 'mouth_panel' },
+      { key: 'ear_acc',    label: '耳アクセ', type: 'ear_panel' },
+      { key: 'ear_adjust', label: '耳調整',   type: 'ear_adjust_panel' },
+      { key: 'mouth',      label: '口元',     type: 'mouth_panel' },
       { key: 'eyeline',  label: 'アイライン', type: 'thumb_only',
         items: [
           { label: 'なし', thumb: null },
@@ -513,6 +514,7 @@ function renderContent(sub) {
     case 'nose_panel':           buildNosePanel(area);           break;
     case 'nose_adjust_panel':    buildNoseAdjustPanel(area);    break;
     case 'face_shape_panel':     buildFaceShapePanel(area);     break;
+    case 'ear_adjust_panel':     buildEarAdjustPanel(area);     break;
     case 'face_deco_panel': buildFaceDecoPanel(area);  break;
     case 'mole_panel':      buildMolePanel(area);      break;
     case 'tattoo_panel':    buildTattooPanel(area);    break;
@@ -1052,6 +1054,126 @@ function buildFaceShapePanel(area) {
   resetBtn.addEventListener('click', () => {
     faceEditor.faceShape.resetState();
     buildFaceShapePanel(area);
+  });
+  area.appendChild(resetBtn);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  耳調整パネル（EarController）
+// ═══════════════════════════════════════════════════════════════
+const EAR_ADJUST_SLIDERS = [
+  { key: 'scale',  label: '耳の大きさ',      min: -100, max: 100, step: 1 },
+  { key: 'posY',   label: '耳の高さ',        min: -100, max: 100, step: 1 },
+  { key: 'posZ',   label: '耳の前後位置',    min: -100, max: 100, step: 1 },
+  { key: 'posX',   label: '耳の左右位置',    min: -100, max: 100, step: 1 },
+  { key: 'rotX',   label: '耳の角度（前後）', min: -180, max: 180, step: 1 },
+  { key: 'rotY',   label: '耳の角度（左右）', min: -180, max: 180, step: 1 },
+  { key: 'spread', label: '耳の開き',        min: -100, max: 100, step: 1 },
+];
+
+function _initEarIfNeeded() {
+  if (!faceEditor) faceEditor = new FaceEditor(character);
+  if (character?.parts['head']) faceEditor.ear.init();
+}
+
+function _applyEarState() {
+  faceEditor?.ear.applyState();
+}
+
+function _buildEarSlidersSection(area, side) {
+  const params = faceEditor.ear.getState()[side];
+
+  EAR_ADJUST_SLIDERS.forEach(sl => {
+    const row = document.createElement('div');
+    row.className = 'sl-row';
+
+    const nm = document.createElement('span');
+    nm.className = 'sl-name';
+    nm.textContent = sl.label;
+
+    const inp = document.createElement('input');
+    inp.type  = 'range';
+    inp.min   = sl.min; inp.max = sl.max; inp.step = sl.step;
+    inp.value = params[sl.key] ?? 0;
+
+    const vl = document.createElement('span');
+    vl.className = 'sl-val';
+    vl.textContent = inp.value;
+
+    inp.addEventListener('input', () => {
+      params[sl.key] = parseFloat(inp.value);
+      vl.textContent  = inp.value;
+      _applyEarState();
+    });
+
+    row.appendChild(nm); row.appendChild(inp); row.appendChild(vl);
+    area.appendChild(row);
+  });
+}
+
+function buildEarAdjustPanel(area) {
+  area.innerHTML = '';
+
+  _initEarIfNeeded();
+  const earState = faceEditor.ear.getState(); // ライブ参照
+
+  // ── 左右同時編集チェックボックス ──────────────────────────
+  const syncRow = document.createElement('div');
+  syncRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+
+  const chk = document.createElement('input');
+  chk.type    = 'checkbox';
+  chk.id      = 'ear-sync-lr';
+  chk.checked = earState.syncLR;
+  chk.style.accentColor = 'var(--accent)';
+
+  const chkLbl = document.createElement('label');
+  chkLbl.htmlFor    = 'ear-sync-lr';
+  chkLbl.textContent = '左右同時編集';
+  chkLbl.style.cssText = 'cursor:pointer;font-size:13px;';
+
+  syncRow.appendChild(chk);
+  syncRow.appendChild(chkLbl);
+  area.appendChild(syncRow);
+
+  // ── スライダーエリア（syncLR に応じて再描画）───────────────
+  const sliderArea = document.createElement('div');
+  area.appendChild(sliderArea);
+
+  function renderSliders() {
+    sliderArea.innerHTML = '';
+    if (earState.syncLR) {
+      _buildEarSlidersSection(sliderArea, 'both');
+    } else {
+      const lblL = document.createElement('div');
+      lblL.className = 'nose-sep';
+      lblL.textContent = '左耳';
+      sliderArea.appendChild(lblL);
+      _buildEarSlidersSection(sliderArea, 'left');
+
+      const lblR = document.createElement('div');
+      lblR.className = 'nose-sep';
+      lblR.textContent = '右耳';
+      sliderArea.appendChild(lblR);
+      _buildEarSlidersSection(sliderArea, 'right');
+    }
+  }
+
+  chk.addEventListener('change', () => {
+    earState.syncLR = chk.checked;
+    renderSliders();
+  });
+
+  renderSliders();
+
+  // ── リセットボタン ────────────────────────────────────────
+  const resetBtn = document.createElement('button');
+  resetBtn.className    = 'hbtn';
+  resetBtn.style.marginTop = '10px';
+  resetBtn.textContent  = '耳調整リセット';
+  resetBtn.addEventListener('click', () => {
+    faceEditor.ear.resetState();
+    renderSliders();
   });
   area.appendChild(resetBtn);
 }

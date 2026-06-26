@@ -658,6 +658,147 @@ export class FaceShapeController extends FacePartController {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  EarController  — 耳の位置・大きさ・角度・開き制御
+//
+//  ボーン収集:
+//    head グループ内の名前に "ear" を含むボーンをすべて収集。
+//    骨名の末尾が "_R" なら右耳、それ以外は左耳に分類する。
+//    見つからない場合は baseBoneMap にフォールバック。
+//
+//  パラメータ:
+//    scale  : 耳の大きさ      (重心基準 XYZ スケール)
+//    posY   : 耳の高さ        (Y オフセット)
+//    posZ   : 耳の前後位置    (Z オフセット)
+//    posX   : 耳の左右位置    (X オフセット、左右で符号反転)
+//    rotX   : 耳の角度（前後）(X 軸回転をレスト回転に加算)
+//    rotY   : 耳の角度（左右）(Y 軸回転、左右で符号反転)
+//    spread : 耳の開き        (X 方向に外側へ押し出す)
+// ═══════════════════════════════════════════════════════════════
+function _earParamsDefault() {
+  return { scale: 0, posY: 0, posZ: 0, posX: 0, rotX: 0, rotY: 0, spread: 0 };
+}
+
+export class EarController extends FacePartController {
+  constructor(character) {
+    super(character);
+    this._state = {
+      syncLR: true,
+      both:   _earParamsDefault(),
+      left:   _earParamsDefault(),
+      right:  _earParamsDefault(),
+    };
+  }
+
+  // ── ボーン収集：head グループ優先 → baseBoneMap フォールバック ──
+  init() {
+    this._bonesL = {}; this._bonesR = {};
+    this._restL  = {}; this._restR  = {};
+
+    const collect = obj => {
+      if (!obj.name || !/ear/i.test(obj.name)) return;
+      const isR   = /[_.]R$/i.test(obj.name);
+      const bones = isR ? this._bonesR : this._bonesL;
+      const rests = isR ? this._restR  : this._restL;
+      if (bones[obj.name]) return;
+      bones[obj.name] = obj;
+      rests[obj.name] = {
+        pos:   obj.position.clone(),
+        rot:   obj.rotation.clone(),
+        scale: obj.scale.clone(),
+      };
+    };
+
+    const headGroup = this.character.parts['head'];
+    if (headGroup) headGroup.traverse(collect);
+
+    if (Object.keys(this._bonesL).length === 0 && Object.keys(this._bonesR).length === 0) {
+      const boneMap = this.character.baseBoneMap ?? {};
+      for (const name in boneMap) collect(boneMap[name]);
+    }
+
+    this._computeCenter('L');
+    this._computeCenter('R');
+
+    return Object.keys(this._bonesL).length > 0 || Object.keys(this._bonesR).length > 0;
+  }
+
+  getState() { return this._state; }
+  setValue(name, value) { this._state[name] = value; }
+  getValue(name)        { return this._state[name];  }
+
+  applyState() {
+    if (this._state.syncLR) {
+      this._applySide('L', this._state.both);
+      this._applySide('R', this._state.both);
+    } else {
+      this._applySide('L', this._state.left);
+      this._applySide('R', this._state.right);
+    }
+  }
+
+  resetState() {
+    this._state.both  = _earParamsDefault();
+    this._state.left  = _earParamsDefault();
+    this._state.right = _earParamsDefault();
+    this.reset('both');
+  }
+
+  serialize() {
+    return {
+      syncLR: this._state.syncLR,
+      both:   { ...this._state.both  },
+      left:   { ...this._state.left  },
+      right:  { ...this._state.right },
+    };
+  }
+
+  deserialize(data) {
+    if (!data) return;
+    this._state.syncLR = data.syncLR ?? true;
+    if (data.both)  Object.assign(this._state.both,  data.both);
+    if (data.left)  Object.assign(this._state.left,  data.left);
+    if (data.right) Object.assign(this._state.right, data.right);
+  }
+
+  _applySide(side, params) {
+    const bones  = side === 'L' ? this._bonesL : this._bonesR;
+    const rests  = side === 'L' ? this._restL  : this._restR;
+    const center = side === 'L' ? this.centerL : this.centerR;
+
+    const xSign = side === 'R' ? -1 : 1;
+
+    const scaleFactor = Math.max(0.05, 1.0 + (params.scale  ?? 0) * 0.012);
+    const spreadDx    = (params.spread ?? 0) * 0.0004 * xSign;
+    const dx          = (params.posX  ?? 0) * xSign * 0.0004 + spreadDx;
+    const dy          = (params.posY  ?? 0) * 0.0004;
+    const dz          = (params.posZ  ?? 0) * 0.0004;
+    const rotXRad     = (params.rotX  ?? 0) * (Math.PI / 180);
+    const rotYRad     = (params.rotY  ?? 0) * (Math.PI / 180) * xSign;
+
+    for (const name in bones) {
+      const bone = bones[name], rest = rests[name];
+      if (!bone || !rest) continue;
+
+      // 1. 重心基準でスケール
+      const px = center.x + (rest.pos.x - center.x) * scaleFactor;
+      const py = center.y + (rest.pos.y - center.y) * scaleFactor;
+      const pz = center.z + (rest.pos.z - center.z) * scaleFactor;
+
+      // 2. 位置オフセット
+      bone.position.set(px + dx, py + dy, pz + dz);
+
+      // 3. 回転オフセット（レスト回転に加算）
+      bone.rotation.set(
+        rest.rot.x + rotXRad,
+        rest.rot.y + rotYRad,
+        rest.rot.z,
+        rest.rot.order,
+      );
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  FaceEditor  — 全顔パーツコントローラーの統合管理クラス
 //
 //  使い方:
@@ -675,8 +816,8 @@ export class FaceEditor {
     this.eyebrow   = new EyebrowController(character);
     this.nose      = new NoseController(character);
     this.faceShape = new FaceShapeController(character);
+    this.ear       = new EarController(character);
     // this.mouth = new MouthController(character); // 未実装
-    // this.ear   = new EarController(character);   // 未実装
   }
 
   // head が付け替えられたあとに呼ぶ（ボーン参照を更新）
@@ -685,6 +826,7 @@ export class FaceEditor {
     this.eyebrow.init();
     this.nose.init();
     this.faceShape.init();
+    this.ear.init();
   }
 
   // 全パーツの調整値を 3D へ一括適用
@@ -693,6 +835,7 @@ export class FaceEditor {
     this.eyebrow.applyState();
     this.nose.applyState();
     this.faceShape.applyState();
+    this.ear.applyState();
   }
 
   // 指定パーツ（省略時は全パーツ）をリセット
@@ -701,6 +844,7 @@ export class FaceEditor {
     if (!partName || partName === 'eyebrow')   this.eyebrow.resetState();
     if (!partName || partName === 'nose')      this.nose.resetState();
     if (!partName || partName === 'faceShape') this.faceShape.resetState();
+    if (!partName || partName === 'ear')       this.ear.resetState();
   }
 
   // JSON 保存用シリアライズ
@@ -710,6 +854,7 @@ export class FaceEditor {
       eyebrow:   this.eyebrow.serialize(),
       nose:      this.nose.serialize(),
       faceShape: this.faceShape.serialize(),
+      ear:       this.ear.serialize(),
     };
   }
 
@@ -720,5 +865,6 @@ export class FaceEditor {
     if (data.eyebrow)   this.eyebrow.deserialize(data.eyebrow);
     if (data.nose)      this.nose.deserialize(data.nose);
     if (data.faceShape) this.faceShape.deserialize(data.faceShape);
+    if (data.ear)       this.ear.deserialize(data.ear);
   }
 }
