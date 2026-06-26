@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { KKCharacter } from './characterAssembler.js';
 import { HAIR_ACCESSORY_PRESETS, HAIR_SHINE_PRESETS, BASE_SHAPES, userAccessories } from './hairAccessorySystem.js';
 import { FaceEditor, ExpressionController, EXPRESSION_PRESETS } from './faceControllers.js';
+import { PoseController, POSE_PRESETS, POSE_BONE_GROUPS } from './poseController.js';
 
 // ═══════════════════════════════════════════════════════════════
 //  ステータス / ローディング (UIより先に定義)
@@ -428,6 +429,12 @@ const CATEGORIES = {
       { key: 'expression_editor', label: '表情エディタ', type: 'expression_panel' },
     ],
   },
+  pose: {
+    label: 'ポーズ',
+    subs: [
+      { key: 'pose_editor', label: 'ポーズエディタ', type: 'pose_panel' },
+    ],
+  },
   param: {
     label: '設定',
     subs: [
@@ -473,6 +480,8 @@ let faceEditor          = null;
 // ─── 表情コントローラー ───────────────────────────────────────
 // faceEditor の eye/eyebrow に表情デルタを重ね掛けする
 let expressionController = null;
+// ─── ポーズコントローラー ─────────────────────────────────────
+let poseController = null;
 
 // ═══════════════════════════════════════════════════════════════
 //  UI 描画
@@ -525,6 +534,7 @@ function renderContent(sub) {
     case 'face_shape_panel':     buildFaceShapePanel(area);     break;
     case 'ear_adjust_panel':     buildEarAdjustPanel(area);     break;
     case 'expression_panel':     buildExpressionPanel(area);    break;
+    case 'pose_panel':           buildPosePanel(area);          break;
     case 'face_deco_panel': buildFaceDecoPanel(area);  break;
     case 'mole_panel':      buildMolePanel(area);      break;
     case 'tattoo_panel':    buildTattooPanel(area);    break;
@@ -5861,6 +5871,158 @@ function buildExpressionPanel(area) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  ポーズエディタパネル
+// ═══════════════════════════════════════════════════════════════
+function _initPoseIfNeeded() {
+  if (!poseController) {
+    poseController = new PoseController(character);
+    poseController.init();
+  } else if (!poseController.character) {
+    poseController.character = character;
+    poseController.init();
+  }
+}
+
+function buildPosePanel(area) {
+  area.innerHTML = '';
+  _initPoseIfNeeded();
+
+  // ── プリセットグリッド ────────────────────────────────────
+  const presetSep = document.createElement('div');
+  presetSep.className = 'nose-sep';
+  presetSep.textContent = 'ポーズプリセット';
+  area.appendChild(presetSep);
+
+  const presetGrid = document.createElement('div');
+  presetGrid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:12px;';
+  area.appendChild(presetGrid);
+
+  function renderPresets() {
+    presetGrid.innerHTML = '';
+    const cur = poseController.getPreset();
+    POSE_PRESETS.forEach(p => {
+      const btn = document.createElement('button');
+      const active = p.id === cur;
+      btn.className = 'hbtn' + (active ? ' active' : '');
+      btn.style.cssText = 'font-size:11px;padding:4px 2px;' +
+        (active ? 'background:rgba(100,160,255,0.2);border-color:var(--accent);color:var(--accent);' : '');
+      btn.textContent = p.label;
+      btn.addEventListener('click', () => {
+        poseController.setPreset(p.id);
+        poseController.applyState();
+        buildPosePanel(area);
+      });
+      presetGrid.appendChild(btn);
+    });
+  }
+  renderPresets();
+
+  // ── 左右連動チェックボックス ──────────────────────────────
+  const syncRow = document.createElement('div');
+  syncRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:12px;';
+  const chk = document.createElement('input');
+  chk.type = 'checkbox'; chk.id = 'pose-sync-lr';
+  chk.checked = poseController.isSyncLR();
+  chk.style.accentColor = 'var(--accent)';
+  const chkLbl = document.createElement('label');
+  chkLbl.htmlFor = 'pose-sync-lr';
+  chkLbl.textContent = '左右同時編集';
+  chkLbl.style.cssText = 'cursor:pointer;font-size:13px;';
+  syncRow.appendChild(chk); syncRow.appendChild(chkLbl);
+  area.appendChild(syncRow);
+
+  // ── ボーングループスライダー ──────────────────────────────
+  const boneArea = document.createElement('div');
+  area.appendChild(boneArea);
+
+  function renderBoneGroups() {
+    boneArea.innerHTML = '';
+    const syncLR = poseController.isSyncLR();
+
+    POSE_BONE_GROUPS.forEach(grp => {
+      // syncLR ON 時は右側グループをスキップ（左側で連動制御）
+      if (syncLR && grp.isRight) {
+        const note = document.createElement('div');
+        note.style.cssText = 'color:#5a6080;font-size:11px;margin:4px 0 8px;padding:4px 8px;border:1px solid #2a3050;border-radius:4px;';
+        note.textContent = `${grp.group} ← 左と連動中`;
+        boneArea.appendChild(note);
+        return;
+      }
+
+      const grpLbl = document.createElement('div');
+      grpLbl.className = 'nose-sep';
+      grpLbl.textContent = grp.group + (syncLR && grp.isLeft ? '（右も連動）' : '');
+      boneArea.appendChild(grpLbl);
+
+      grp.bones.forEach(boneDef => {
+        const boneRot = poseController.getRotation(boneDef.key);
+
+        const boneLbl = document.createElement('div');
+        boneLbl.style.cssText = 'font-size:11px;color:#8090b0;margin:6px 0 2px;';
+        boneLbl.textContent = boneDef.label;
+        boneArea.appendChild(boneLbl);
+
+        [
+          { axis: 'x', label: 'Rotation X' },
+          { axis: 'y', label: 'Rotation Y' },
+          { axis: 'z', label: 'Rotation Z' },
+        ].forEach(({ axis, label }) => {
+          const row = document.createElement('div');
+          row.className = 'sl-row';
+
+          const nm = document.createElement('span');
+          nm.className = 'sl-name';
+          nm.style.fontSize = '11px';
+          nm.textContent = label;
+
+          const inp = document.createElement('input');
+          inp.type = 'range'; inp.min = -180; inp.max = 180; inp.step = 1;
+          inp.value = boneRot[axis] ?? 0;
+
+          const vl = document.createElement('span');
+          vl.className = 'sl-val';
+          vl.textContent = inp.value + '°';
+
+          inp.addEventListener('input', () => {
+            const v = parseFloat(inp.value);
+            poseController.setRotation(boneDef.key, axis, v);
+            poseController.applyState();
+            vl.textContent = inp.value + '°';
+            // プリセットハイライトをクリア
+            presetGrid.querySelectorAll('.hbtn').forEach(b => {
+              b.classList.remove('active');
+              b.style.background = ''; b.style.borderColor = ''; b.style.color = '';
+            });
+          });
+
+          row.appendChild(nm); row.appendChild(inp); row.appendChild(vl);
+          boneArea.appendChild(row);
+        });
+      });
+    });
+  }
+
+  chk.addEventListener('change', () => {
+    poseController.setSyncLR(chk.checked);
+    poseController.applyState();
+    renderBoneGroups();
+  });
+
+  renderBoneGroups();
+
+  // ── リセットボタン ────────────────────────────────────────
+  const resetBtn = document.createElement('button');
+  resetBtn.className = 'hbtn';
+  resetBtn.style.marginTop = '12px';
+  resetBtn.textContent = 'ポーズリセット';
+  resetBtn.addEventListener('click', () => {
+    poseController.resetState();
+    buildPosePanel(area);
+  });
+  area.appendChild(resetBtn);
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  セーブ / ロード / 初期化
 // ═══════════════════════════════════════════════════════════════
 function saveJSON() {
@@ -5884,6 +6046,7 @@ function saveJSON() {
     },
     face:       faceEditor          ? faceEditor.serialize()          : {},
     expression: expressionController ? expressionController.serialize() : null,
+    pose:       poseController       ? poseController.serialize()       : null,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = Object.assign(document.createElement('a'), {
@@ -5978,6 +6141,16 @@ async function applyLoadedData(d) {
     }
     expressionController.deserialize(d.expression);
     expressionController.applyState();
+  }
+
+  // ポーズ復元（pose キーがない古いデータはスキップ）
+  if (d.pose) {
+    if (!poseController) poseController = new PoseController(character);
+    if (!poseController._bones || Object.keys(poseController._bones).length === 0) {
+      poseController.init();
+    }
+    poseController.deserialize(d.pose);
+    poseController.applyState();
   }
 
   setLoading(false);
