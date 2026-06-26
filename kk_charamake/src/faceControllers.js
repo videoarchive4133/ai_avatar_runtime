@@ -475,6 +475,189 @@ export class NoseController extends FacePartController {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  FaceShapeController  — 顔の輪郭・頬・顎・額の形状制御
+//
+//  ボーン収集:
+//    head グループ内のボーンを名前パターンで 5 グループに分類。
+//    chin / cheek / jaw / forehead / 汎用 face-shape。
+//    左右対称（L/R）ボーンは両方まとめて収集し一括適用する。
+//
+//  パラメータ → 適用グループの対応:
+//    faceWidth     → cheek + jaw + face  (X スケール)
+//    faceHeight    → chin + face         (Y スケール)
+//    chinLength    → chin               (Y オフセット)
+//    chinSharp     → chin tip           (X スケール反転)
+//    cheekRound    → cheek              (X/Z スケール)
+//    cheekBone     → cheek (upper)      (Y/Z オフセット)
+//    jawAngle      → jaw               (X オフセット)
+//    foreheadWidth → forehead + face    (X スケール)
+// ═══════════════════════════════════════════════════════════════
+const FACE_SHAPE_GROUP_PATTERNS = {
+  chin:     /chin/i,
+  cheek:    /cheek/i,
+  jaw:      /jaw/i,
+  forehead: /forehead|brow(?!_)|front/i,
+  face:     /(?:cf[_s]+face|cf[_s]+head)[_s]/i,
+};
+
+function _faceShapeParamsDefault() {
+  return {
+    faceWidth:     0,
+    faceHeight:    0,
+    chinLength:    0,
+    chinSharp:     0,
+    cheekRound:    0,
+    cheekBone:     0,
+    jawAngle:      0,
+    foreheadWidth: 0,
+  };
+}
+
+export class FaceShapeController extends FacePartController {
+  constructor(character) {
+    super(character);
+    // グループ別ボーン + レスト
+    this._groups = { chin: {}, cheek: {}, jaw: {}, forehead: {}, face: {} };
+    this._rests  = {};
+    this._center = new THREE.Vector3();
+    this._state  = { params: _faceShapeParamsDefault() };
+  }
+
+  // ── 初期化：head グループからボーンを分類収集 ──────────────
+  init() {
+    this._groups  = { chin: {}, cheek: {}, jaw: {}, forehead: {}, face: {} };
+    this._rests   = {};
+
+    const headGroup = this.character.parts['head'];
+    if (!headGroup) return false;
+
+    headGroup.traverse(obj => {
+      if (!obj.name) return;
+      const name = obj.name;
+      // どのグループにも属するか判定（最初にマッチしたグループに登録）
+      for (const [grp, pat] of Object.entries(FACE_SHAPE_GROUP_PATTERNS)) {
+        if (pat.test(name) && !this._groups[grp][name]) {
+          this._groups[grp][name] = obj;
+          if (!this._rests[name]) {
+            this._rests[name] = {
+              pos:   obj.position.clone(),
+              rot:   obj.rotation.clone(),
+              scale: obj.scale.clone(),
+            };
+          }
+          break;
+        }
+      }
+    });
+
+    // 全収集ボーンの重心
+    const center = new THREE.Vector3();
+    let count = 0;
+    for (const name in this._rests) { center.add(this._rests[name].pos); count++; }
+    if (count) center.divideScalar(count);
+    this._center.copy(center);
+
+    return count > 0;
+  }
+
+  getState()  { return this._state; }
+
+  applyState()  { this._applyFaceShape(this._state.params); }
+
+  resetState() {
+    this._state.params = _faceShapeParamsDefault();
+    for (const name in this._rests) {
+      const grp = this._findGroupBone(name);
+      if (grp && this._rests[name]) {
+        grp.position.copy(this._rests[name].pos);
+        grp.rotation.copy(this._rests[name].rot);
+        grp.scale.copy(this._rests[name].scale);
+      }
+    }
+  }
+
+  _findGroupBone(name) {
+    for (const g of Object.values(this._groups)) {
+      if (g[name]) return g[name];
+    }
+    return null;
+  }
+
+  serialize()       { return { ...this._state.params }; }
+  deserialize(data) { if (data) Object.assign(this._state.params, data); }
+
+  // ── ボーン変形適用 ───────────────────────────────────────
+  _applyFaceShape(params) {
+    const cx = this._center.x, cy = this._center.y;
+
+    // 係数計算
+    const wF  = Math.max(0.05, 1.0 + (params.faceWidth     ?? 0) * 0.010); // X
+    const hF  = Math.max(0.05, 1.0 + (params.faceHeight    ?? 0) * 0.010); // Y
+    const crF = Math.max(0.05, 1.0 + (params.cheekRound    ?? 0) * 0.012); // X/Z
+    const fwF = Math.max(0.05, 1.0 + (params.foreheadWidth ?? 0) * 0.010); // X
+    const chinDy   = (params.chinLength ?? 0) * 0.0005;
+    const chinShX  = Math.max(0.05, 1.0 - (params.chinSharp ?? 0) * 0.008); // 小さいほど尖る
+    const cheekBDy = (params.cheekBone ?? 0) * 0.0004;
+    const jawDx    = (params.jawAngle  ?? 0) * 0.0003;
+
+    // ── chin グループ ──────────────────────────────────────
+    for (const name in this._groups.chin) {
+      const bone = this._groups.chin[name], rest = this._rests[name];
+      if (!bone || !rest) continue;
+      const isTip = /tip|t$/i.test(name);
+      const sx = isTip ? chinShX : 1.0;
+      bone.scale.set(rest.scale.x * sx, rest.scale.y * hF, rest.scale.z);
+      bone.position.set(rest.pos.x, rest.pos.y + chinDy, rest.pos.z);
+      bone.rotation.copy(rest.rot);
+    }
+
+    // ── cheek グループ ─────────────────────────────────────
+    for (const name in this._groups.cheek) {
+      const bone = this._groups.cheek[name], rest = this._rests[name];
+      if (!bone || !rest) continue;
+      // L/R 対称：L 側は +X, R 側は -X から中心に向かう
+      const xSign = /[_.]L$/i.test(name) ? 1 : (/[_.]R$/i.test(name) ? -1 : 1);
+      const ox = (rest.pos.x - cx) * crF;
+      const isUpper = /up|hi/i.test(name);
+      bone.position.set(cx + ox, rest.pos.y + (isUpper ? cheekBDy : 0), rest.pos.z);
+      bone.scale.set(rest.scale.x * wF, rest.scale.y, rest.scale.z * crF);
+      bone.rotation.copy(rest.rot);
+    }
+
+    // ── jaw グループ ──────────────────────────────────────
+    for (const name in this._groups.jaw) {
+      const bone = this._groups.jaw[name], rest = this._rests[name];
+      if (!bone || !rest) continue;
+      const xSign = /[_.]L$/i.test(name) ? 1 : (/[_.]R$/i.test(name) ? -1 : 1);
+      bone.position.set(rest.pos.x + xSign * jawDx, rest.pos.y, rest.pos.z);
+      bone.scale.set(rest.scale.x * wF, rest.scale.y, rest.scale.z);
+      bone.rotation.copy(rest.rot);
+    }
+
+    // ── forehead グループ ─────────────────────────────────
+    for (const name in this._groups.forehead) {
+      const bone = this._groups.forehead[name], rest = this._rests[name];
+      if (!bone || !rest) continue;
+      const ox = (rest.pos.x - cx) * fwF;
+      bone.position.set(cx + ox, rest.pos.y, rest.pos.z);
+      bone.scale.set(rest.scale.x * fwF, rest.scale.y, rest.scale.z);
+      bone.rotation.copy(rest.rot);
+    }
+
+    // ── face 汎用グループ ─────────────────────────────────
+    for (const name in this._groups.face) {
+      const bone = this._groups.face[name], rest = this._rests[name];
+      if (!bone || !rest) continue;
+      const ox = (rest.pos.x - cx) * wF * fwF;
+      const oy = (rest.pos.y - cy) * hF;
+      bone.position.set(cx + ox, cy + oy, rest.pos.z);
+      bone.scale.copy(rest.scale);
+      bone.rotation.copy(rest.rot);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  FaceEditor  — 全顔パーツコントローラーの統合管理クラス
 //
 //  使い方:
@@ -488,12 +671,12 @@ export class NoseController extends FacePartController {
 export class FaceEditor {
   constructor(character) {
     this.character = character;
-    this.eye     = new EyeController(character);
-    this.eyebrow = new EyebrowController(character);
-    this.nose    = new NoseController(character);
-    // this.mouth     = new MouthController(character);     // 未実装
-    // this.faceShape = new FaceShapeController(character); // 未実装
-    // this.ear       = new EarController(character);       // 未実装
+    this.eye       = new EyeController(character);
+    this.eyebrow   = new EyebrowController(character);
+    this.nose      = new NoseController(character);
+    this.faceShape = new FaceShapeController(character);
+    // this.mouth = new MouthController(character); // 未実装
+    // this.ear   = new EarController(character);   // 未実装
   }
 
   // head が付け替えられたあとに呼ぶ（ボーン参照を更新）
@@ -501,6 +684,7 @@ export class FaceEditor {
     this.eye.init();
     this.eyebrow.init();
     this.nose.init();
+    this.faceShape.init();
   }
 
   // 全パーツの調整値を 3D へ一括適用
@@ -508,29 +692,33 @@ export class FaceEditor {
     this.eye.applyState();
     this.eyebrow.applyState();
     this.nose.applyState();
+    this.faceShape.applyState();
   }
 
   // 指定パーツ（省略時は全パーツ）をリセット
   reset(partName) {
-    if (!partName || partName === 'eye')     this.eye.resetState();
-    if (!partName || partName === 'eyebrow') this.eyebrow.resetState();
-    if (!partName || partName === 'nose')    this.nose.resetState();
+    if (!partName || partName === 'eye')       this.eye.resetState();
+    if (!partName || partName === 'eyebrow')   this.eyebrow.resetState();
+    if (!partName || partName === 'nose')      this.nose.resetState();
+    if (!partName || partName === 'faceShape') this.faceShape.resetState();
   }
 
-  // JSON 保存用シリアライズ → { eye: {...}, eyebrow: {...}, nose: {...} }
+  // JSON 保存用シリアライズ
   serialize() {
     return {
-      eye:     this.eye.serialize(),
-      eyebrow: this.eyebrow.serialize(),
-      nose:    this.nose.serialize(),
+      eye:       this.eye.serialize(),
+      eyebrow:   this.eyebrow.serialize(),
+      nose:      this.nose.serialize(),
+      faceShape: this.faceShape.serialize(),
     };
   }
 
   // JSON 読込復元（未知キーは無視するので後方互換あり）
   deserialize(data) {
     if (!data) return;
-    if (data.eye)     this.eye.deserialize(data.eye);
-    if (data.eyebrow) this.eyebrow.deserialize(data.eyebrow);
-    if (data.nose)    this.nose.deserialize(data.nose);
+    if (data.eye)       this.eye.deserialize(data.eye);
+    if (data.eyebrow)   this.eyebrow.deserialize(data.eyebrow);
+    if (data.nose)      this.nose.deserialize(data.nose);
+    if (data.faceShape) this.faceShape.deserialize(data.faceShape);
   }
 }

@@ -290,6 +290,7 @@ const CATEGORIES = {
           { label: 'タイプ50', url: '/models/bo_head_50.glb', thumb: null },
         ],
       },
+      { key: 'head_adjust', label: '輪郭調整', type: 'face_shape_panel' },
       { key: 'eye',      label: '目',         type: 'thumb_only',
         items: faceThumbItems('thumb_hitomi', EYE_IDS),
       },
@@ -511,6 +512,7 @@ function renderContent(sub) {
     case 'eyebrow_adjust_panel': buildEyebrowAdjustPanel(area); break;
     case 'nose_panel':           buildNosePanel(area);           break;
     case 'nose_adjust_panel':    buildNoseAdjustPanel(area);    break;
+    case 'face_shape_panel':     buildFaceShapePanel(area);     break;
     case 'face_deco_panel': buildFaceDecoPanel(area);  break;
     case 'mole_panel':      buildMolePanel(area);      break;
     case 'tattoo_panel':    buildTattooPanel(area);    break;
@@ -983,6 +985,73 @@ function buildNoseAdjustPanel(area) {
     faceEditor.nose.resetState();
     // スライダーを再描画するためパネルを再構築
     buildNoseAdjustPanel(area);
+  });
+  area.appendChild(resetBtn);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  輪郭調整パネル（FaceShapeController）
+// ═══════════════════════════════════════════════════════════════
+const FACE_SHAPE_SLIDERS = [
+  { key: 'faceWidth',     label: '顔の横幅',  min: -100, max: 100, step: 1 },
+  { key: 'faceHeight',    label: '顔の縦幅',  min: -100, max: 100, step: 1 },
+  { key: 'chinLength',    label: '顎の長さ',  min: -100, max: 100, step: 1 },
+  { key: 'chinSharp',     label: '顎の尖り',  min: -100, max: 100, step: 1 },
+  { key: 'cheekRound',    label: '頬の丸み',  min: -100, max: 100, step: 1 },
+  { key: 'cheekBone',     label: '頬骨',      min: -100, max: 100, step: 1 },
+  { key: 'jawAngle',      label: 'エラ',      min: -100, max: 100, step: 1 },
+  { key: 'foreheadWidth', label: '額の広さ',  min: -100, max: 100, step: 1 },
+];
+
+function _initFaceShapeIfNeeded() {
+  if (!faceEditor) faceEditor = new FaceEditor(character);
+  if (character?.parts['head']) faceEditor.faceShape.init();
+}
+
+function _applyFaceShapeState() {
+  faceEditor?.faceShape.applyState();
+}
+
+function buildFaceShapePanel(area) {
+  area.innerHTML = '';
+
+  _initFaceShapeIfNeeded();
+  const params = faceEditor.faceShape.getState().params; // ライブ参照
+
+  FACE_SHAPE_SLIDERS.forEach(sl => {
+    const row = document.createElement('div');
+    row.className = 'sl-row';
+
+    const nm = document.createElement('span');
+    nm.className = 'sl-name';
+    nm.textContent = sl.label;
+
+    const inp = document.createElement('input');
+    inp.type  = 'range';
+    inp.min   = sl.min; inp.max = sl.max; inp.step = sl.step;
+    inp.value = params[sl.key] ?? 0;
+
+    const vl = document.createElement('span');
+    vl.className = 'sl-val';
+    vl.textContent = inp.value;
+
+    inp.addEventListener('input', () => {
+      params[sl.key] = parseFloat(inp.value);
+      vl.textContent  = inp.value;
+      _applyFaceShapeState();
+    });
+
+    row.appendChild(nm); row.appendChild(inp); row.appendChild(vl);
+    area.appendChild(row);
+  });
+
+  const resetBtn = document.createElement('button');
+  resetBtn.className    = 'hbtn';
+  resetBtn.style.marginTop = '10px';
+  resetBtn.textContent  = '輪郭調整リセット';
+  resetBtn.addEventListener('click', () => {
+    faceEditor.faceShape.resetState();
+    buildFaceShapePanel(area);
   });
   area.appendChild(resetBtn);
 }
