@@ -7,6 +7,7 @@ import { PoseController, POSE_PRESETS, POSE_BONE_GROUPS } from './poseController
 import { MotionController, MOTION_PRESETS, EASING_TYPES } from './motionController.js';
 import { CameraLightController, CAMERA_PRESETS, LIGHT_PRESETS } from './cameraLightController.js';
 import { SceneController, BACKGROUND_PRESETS, PROP_TYPES } from './sceneController.js';
+import { PresetManager } from './presetManager.js';
 
 // ═══════════════════════════════════════════════════════════════
 //  ステータス / ローディング (UIより先に定義)
@@ -462,6 +463,12 @@ const CATEGORIES = {
       { key: 'scene_editor', label: 'シーンエディタ', type: 'scene_panel' },
     ],
   },
+  preset: {
+    label: 'プリセット',
+    subs: [
+      { key: 'preset_manager', label: 'プリセット管理', type: 'preset_panel' },
+    ],
+  },
   param: {
     label: '設定',
     subs: [
@@ -515,6 +522,8 @@ let motionController = null;
 let cameraLightController = null;
 // ─── シーンコントローラー ───────────────────────────────────────
 let sceneController = null;
+// ─── プリセットマネージャー ─────────────────────────────────────
+let presetManager = null;
 
 // ═══════════════════════════════════════════════════════════════
 //  UI 描画
@@ -571,6 +580,7 @@ function renderContent(sub) {
     case 'motion_panel':         buildMotionPanel(area);        break;
     case 'camera_light_panel':  buildCameraLightPanel(area);   break;
     case 'scene_panel':         buildScenePanel(area);         break;
+    case 'preset_panel':        buildPresetPanel(area);        break;
     case 'face_deco_panel': buildFaceDecoPanel(area);  break;
     case 'mole_panel':      buildMolePanel(area);      break;
     case 'tattoo_panel':    buildTattooPanel(area);    break;
@@ -6473,6 +6483,336 @@ function buildScenePanel(area) {
     buildScenePanel(area);
   });
   area.appendChild(resetBtn);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  プリセットマネージャー
+// ═══════════════════════════════════════════════════════════════
+
+function _initPresetIfNeeded() {
+  if (!presetManager) presetManager = new PresetManager();
+}
+
+// 現在のキャラクター状態をスナップショットとして取得
+function getCharacterSnapshot() {
+  return {
+    version: 4,
+    name:    document.getElementById('chara-name')?.value || '新しいキャラ',
+    state:   { ...uiState },
+    hairAcc: {
+      presetId: hairAccState.presetId,
+      target:   hairAccState.target,
+      color:    hairAccState.color,
+      pos:      [...hairAccState.pos],
+      rot:      [...hairAccState.rot],
+      scale:    hairAccState.scale,
+    },
+    hairShine: {
+      preset:          hairShineState.preset,
+      roughness:       hairShineState.roughness,
+      metalness:       hairShineState.metalness,
+      envMapIntensity: hairShineState.envMapIntensity,
+    },
+    face:       faceEditor           ? faceEditor.serialize()           : {},
+    expression: expressionController ? expressionController.serialize() : null,
+    pose:       poseController       ? poseController.serialize()       : null,
+    motion:     motionController     ? motionController.serialize()     : null,
+    cameraLight: cameraLightController ? cameraLightController.serialize() : null,
+    scene:       sceneController      ? sceneController.serialize()      : null,
+  };
+}
+
+function buildPresetPanel(area) {
+  area.innerHTML = '';
+  _initPresetIfNeeded();
+  const pm = presetManager;
+
+  // ── タグカラー ────────────────────────────────────────────
+  const TAG_COLORS = ['#3a6bc0','#2e8b57','#9932cc','#b8600d','#8b1a1a','#1a6b8b','#6b8b1a','#8b1a6b'];
+  function tagColor(tag) {
+    let h = 0; for (const c of tag) h = (h * 31 + c.charCodeAt(0)) & 0xffff;
+    return TAG_COLORS[h % TAG_COLORS.length];
+  }
+
+  // ── 保存ダイアログ ────────────────────────────────────────
+  function showSaveDialog(existingId) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9000;display:flex;align-items:center;justify-content:center;';
+
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#1a1d30;border:1px solid #333a5c;border-radius:10px;padding:20px;width:300px;display:flex;flex-direction:column;gap:12px;';
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:14px;font-weight:700;color:#c8d0f0;';
+    title.textContent = existingId ? 'プリセット名を変更' : 'プリセットとして保存';
+    box.appendChild(title);
+
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'プリセット名';
+    nameInput.style.cssText = 'background:#0f1220;border:1px solid #2a3050;border-radius:5px;color:#eee;padding:7px 10px;font-size:13px;outline:none;';
+    if (existingId) {
+      const src = pm.listPresets().find(p => p.id === existingId);
+      nameInput.value = src?.name ?? '';
+    }
+    box.appendChild(nameInput);
+
+    let tagsVal = [];
+    if (!existingId) {
+      const tagRow = document.createElement('div');
+      tagRow.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+      const tagLabel = document.createElement('div');
+      tagLabel.style.cssText = 'font-size:11px;color:#888;';
+      tagLabel.textContent = 'タグ（カンマ区切り）';
+      const tagInput = document.createElement('input');
+      tagInput.type = 'text'; tagInput.placeholder = '例: 制服, 学生';
+      tagInput.style.cssText = 'background:#0f1220;border:1px solid #2a3050;border-radius:5px;color:#eee;padding:7px 10px;font-size:12px;outline:none;';
+      tagInput.addEventListener('input', () => {
+        tagsVal = tagInput.value.split(',').map(t => t.trim()).filter(Boolean);
+      });
+      tagRow.append(tagLabel, tagInput);
+      box.appendChild(tagRow);
+    }
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'hbtn'; cancelBtn.textContent = 'キャンセル';
+    cancelBtn.addEventListener('click', () => document.body.removeChild(overlay));
+
+    const okBtn = document.createElement('button');
+    okBtn.className = 'hbtn'; okBtn.textContent = existingId ? '変更' : '保存';
+    okBtn.style.background = 'rgba(80,140,220,0.18)';
+    okBtn.addEventListener('click', () => {
+      const name = nameInput.value.trim();
+      if (!name) { nameInput.style.borderColor = '#f04040'; return; }
+      if (existingId) {
+        pm.renamePreset(existingId, name);
+      } else {
+        const snapshot = getCharacterSnapshot();
+        snapshot.name = name;
+        const id = pm.savePreset(name, snapshot);
+        if (tagsVal.length) pm.setTags(id, tagsVal);
+      }
+      document.body.removeChild(overlay);
+      buildPresetPanel(area);
+    });
+
+    btnRow.append(cancelBtn, okBtn);
+    box.appendChild(btnRow);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    nameInput.focus();
+  }
+
+  // ── タグ編集ダイアログ ────────────────────────────────────
+  function showTagDialog(id) {
+    const preset = pm.listPresets().find(p => p.id === id);
+    if (!preset) return;
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9000;display:flex;align-items:center;justify-content:center;';
+
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#1a1d30;border:1px solid #333a5c;border-radius:10px;padding:20px;width:280px;display:flex;flex-direction:column;gap:12px;';
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:13px;font-weight:700;color:#c8d0f0;';
+    title.textContent = `「${preset.name}」のタグ編集`;
+    box.appendChild(title);
+
+    const tagInput = document.createElement('input');
+    tagInput.type = 'text'; tagInput.placeholder = '例: 制服, 学生, 可愛い';
+    tagInput.value = (preset.tags || []).join(', ');
+    tagInput.style.cssText = 'background:#0f1220;border:1px solid #2a3050;border-radius:5px;color:#eee;padding:7px 10px;font-size:12px;outline:none;';
+    box.appendChild(tagInput);
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'hbtn'; cancelBtn.textContent = 'キャンセル';
+    cancelBtn.addEventListener('click', () => document.body.removeChild(overlay));
+    const okBtn = document.createElement('button');
+    okBtn.className = 'hbtn'; okBtn.textContent = '保存';
+    okBtn.style.background = 'rgba(80,140,220,0.18)';
+    okBtn.addEventListener('click', () => {
+      const tags = tagInput.value.split(',').map(t => t.trim()).filter(Boolean);
+      pm.setTags(id, tags);
+      document.body.removeChild(overlay);
+      buildPresetPanel(area);
+    });
+    btnRow.append(cancelBtn, okBtn);
+    box.appendChild(btnRow);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    tagInput.focus();
+  }
+
+  // ── 保存ボタン ────────────────────────────────────────────
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'hbtn';
+  saveBtn.style.cssText = 'width:100%;padding:9px;font-size:13px;font-weight:600;background:rgba(80,140,220,0.15);border-color:#3a5cc0;color:#8ab0f0;margin-bottom:10px;';
+  saveBtn.textContent = '＋ 現在のキャラクターをプリセット保存';
+  saveBtn.addEventListener('click', () => showSaveDialog(null));
+  area.appendChild(saveBtn);
+
+  // ── 検索 / フィルター ─────────────────────────────────────
+  const filterRow = document.createElement('div');
+  filterRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;align-items:center;';
+
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text'; searchInput.placeholder = '🔍 名前・タグで検索';
+  searchInput.style.cssText = 'flex:1;background:#0f1220;border:1px solid #2a3050;border-radius:5px;color:#eee;padding:5px 8px;font-size:12px;outline:none;';
+
+  let showFavOnly = false;
+  const favFilterBtn = document.createElement('button');
+  favFilterBtn.className = 'hbtn';
+  favFilterBtn.style.cssText = 'font-size:11px;padding:4px 8px;';
+  favFilterBtn.textContent = '★ お気に入り';
+
+  searchInput.addEventListener('input', renderList);
+  favFilterBtn.addEventListener('click', () => {
+    showFavOnly = !showFavOnly;
+    favFilterBtn.style.background = showFavOnly ? 'rgba(255,200,0,0.2)' : '';
+    favFilterBtn.style.borderColor = showFavOnly ? '#c8a000' : '';
+    renderList();
+  });
+
+  filterRow.append(searchInput, favFilterBtn);
+  area.appendChild(filterRow);
+
+  // ── プリセットリスト ──────────────────────────────────────
+  const listEl = document.createElement('div');
+  area.appendChild(listEl);
+
+  function renderList() {
+    listEl.innerHTML = '';
+    const query = searchInput.value.trim().toLowerCase();
+    let presets = pm.listPresets();
+
+    if (showFavOnly) presets = presets.filter(p => p.favorite);
+    if (query) {
+      presets = presets.filter(p => {
+        const name = (p.name || '').toLowerCase();
+        const tags = (p.tags || []).join(' ').toLowerCase();
+        return name.includes(query) || tags.includes(query);
+      });
+    }
+
+    if (presets.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'text-align:center;color:#444;font-size:12px;padding:20px;';
+      empty.textContent = 'プリセットが見つかりません';
+      listEl.appendChild(empty);
+      return;
+    }
+
+    // ユーザープリセットとビルトインを分けて表示
+    const userPresets    = presets.filter(p => !p.builtin);
+    const builtinPresets = presets.filter(p => p.builtin);
+
+    function makeSection(label, items) {
+      if (items.length === 0) return;
+      const secLabel = document.createElement('div');
+      secLabel.style.cssText = 'font-size:10px;color:#444;text-transform:uppercase;letter-spacing:1px;margin:8px 0 4px;padding-bottom:3px;border-bottom:1px solid #1e2236;';
+      secLabel.textContent = label;
+      listEl.appendChild(secLabel);
+      items.forEach(p => listEl.appendChild(makeCard(p)));
+    }
+
+    makeSection('ユーザープリセット', userPresets);
+    makeSection('初期プリセット', builtinPresets);
+  }
+
+  function makeCard(preset) {
+    const card = document.createElement('div');
+    card.style.cssText = 'background:#0f1220;border:1px solid #1e2236;border-radius:7px;padding:8px 10px;margin-bottom:6px;';
+
+    // ヘッダー行
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;';
+
+    // ★ お気に入りボタン
+    const favBtn = document.createElement('button');
+    favBtn.style.cssText = `background:none;border:none;cursor:pointer;font-size:14px;padding:0;color:${preset.favorite ? '#f0c000' : '#333'};`;
+    favBtn.textContent = '★';
+    favBtn.title = 'お気に入り';
+    favBtn.addEventListener('click', () => { pm.toggleFavorite(preset.id); renderList(); });
+
+    // プリセット名
+    const nameEl = document.createElement('span');
+    nameEl.style.cssText = 'flex:1;font-size:13px;font-weight:600;color:#c8d0f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    nameEl.textContent = preset.name;
+
+    // ビルトインバッジ
+    if (preset.builtin) {
+      const badge = document.createElement('span');
+      badge.style.cssText = 'font-size:9px;background:rgba(60,100,180,0.25);border:1px solid #2a4070;color:#6080b0;border-radius:3px;padding:1px 4px;';
+      badge.textContent = '初期';
+      hdr.append(favBtn, nameEl, badge);
+    } else {
+      hdr.append(favBtn, nameEl);
+    }
+    card.appendChild(hdr);
+
+    // タグ行
+    if ((preset.tags || []).length > 0) {
+      const tagRow = document.createElement('div');
+      tagRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:3px;margin-bottom:6px;';
+      preset.tags.forEach(tag => {
+        const t = document.createElement('span');
+        t.style.cssText = `font-size:9px;padding:1px 5px;border-radius:3px;color:#fff;background:${tagColor(tag)};opacity:0.85;`;
+        t.textContent = '#' + tag;
+        tagRow.appendChild(t);
+      });
+      card.appendChild(tagRow);
+    }
+
+    // アクションボタン行
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
+
+    function actionBtn(label, color, onClick) {
+      const b = document.createElement('button');
+      b.className = 'hbtn';
+      b.textContent = label;
+      b.style.cssText = `font-size:10px;padding:3px 7px;${color ? 'background:'+color+';' : ''}`;
+      b.addEventListener('click', onClick);
+      return b;
+    }
+
+    // 読込
+    btnRow.appendChild(actionBtn('読込', 'rgba(50,180,100,0.15)', async () => {
+      if (!confirm(`「${preset.name}」を読み込みますか？`)) return;
+      const data = pm.loadPreset(preset.id);
+      if (data) await applyLoadedData(data);
+    }));
+
+    // 複製
+    btnRow.appendChild(actionBtn('複製', null, () => {
+      const newId = pm.duplicatePreset(preset.id);
+      if (newId) { renderList(); }
+    }));
+
+    // 名前変更（ユーザープリセットのみ）
+    if (!preset.builtin) {
+      btnRow.appendChild(actionBtn('名前変更', null, () => showSaveDialog(preset.id)));
+      btnRow.appendChild(actionBtn('タグ', null, () => showTagDialog(preset.id)));
+      btnRow.appendChild(actionBtn('削除', 'rgba(180,40,40,0.15)', () => {
+        if (!confirm(`「${preset.name}」を削除しますか？`)) return;
+        pm.deletePreset(preset.id);
+        renderList();
+      }));
+    } else {
+      // ビルトインはタグ編集のみ（複製は上で共通）
+    }
+
+    card.appendChild(btnRow);
+    return card;
+  }
+
+  renderList();
 }
 
 // ═══════════════════════════════════════════════════════════════
