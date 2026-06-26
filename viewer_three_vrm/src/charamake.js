@@ -5926,41 +5926,7 @@ const _HAIR_PRESET_SVG = {
 };
 
 const HAIR_STYLE_PRESETS = [
-  // ── ショート ──
-  { id:'h_s01', cat:'ショート', name:'ベリーショート',   icon:'vshort',   vrm:'/assets/vrm/hair/AvatarSample_A.vrm' },
-  { id:'h_s02', cat:'ショート', name:'ショートボブ',     icon:'bob',      vrm:'/assets/vrm/hair/AvatarSample_A.vrm' },
-  { id:'h_s03', cat:'ショート', name:'ウルフカット',     icon:'layered',  vrm:'/assets/vrm/hair/Vita.vrm' },
-  { id:'h_s04', cat:'ショート', name:'ショートレイヤー', icon:'short',    vrm:'/assets/vrm/hair/Sendagaya_Shibu.vrm' },
-  { id:'h_s05', cat:'ショート', name:'アシメショート',   icon:'asym',     vrm:'/assets/vrm/hair/AvatarSample_A.vrm' },
-  { id:'h_s06', cat:'ショート', name:'ピクシーカット',   icon:'vshort',   vrm:'/assets/vrm/hair/Vivi.vrm' },
-  // ── ミディアム ──
-  { id:'h_m01', cat:'ミディアム', name:'ミディアムボブ',     icon:'bob',      vrm:'/assets/vrm/hair/AvatarSample_B.vrm' },
-  { id:'h_m02', cat:'ミディアム', name:'ナチュラルウェーブ', icon:'wavy',     vrm:'/assets/vrm/hair/AvatarSample_B.vrm' },
-  { id:'h_m03', cat:'ミディアム', name:'ストレートミディ',   icon:'medium',   vrm:'/assets/vrm/hair/HairSample_Female.vrm' },
-  { id:'h_m04', cat:'ミディアム', name:'レイヤードミディ',   icon:'layered',  vrm:'/assets/vrm/hair/Sakurada_Fumiriya.vrm' },
-  { id:'h_m05', cat:'ミディアム', name:'フェミニンミディ',   icon:'feminine', vrm:'/assets/vrm/hair/Sendagaya_Shino.vrm' },
-  { id:'h_m06', cat:'ミディアム', name:'ゆるふわミディ',     icon:'medium',   vrm:'/assets/vrm/hair/AvatarSample_B.vrm' },
-  // ── ロング ──
-  { id:'h_l01', cat:'ロング', name:'ストレートロング', icon:'long',     vrm:'/assets/vrm/hair/AvatarSample_C.vrm' },
-  { id:'h_l02', cat:'ロング', name:'ウェーブロング',   icon:'wavy',     vrm:'/assets/vrm/hair/AvatarSample_C.vrm' },
-  { id:'h_l03', cat:'ロング', name:'フェミニンロング', icon:'feminine', vrm:'/assets/vrm/hair/Victoria_Rubin.vrm' },
-  { id:'h_l04', cat:'ロング', name:'ゴシックロング',   icon:'gothic',   vrm:'/assets/vrm/hair/Darkness_Shibu.vrm' },
-  { id:'h_l05', cat:'ロング', name:'レイヤードロング', icon:'layered',  vrm:'/assets/vrm/hair/AvatarSample_C.vrm' },
-  { id:'h_l06', cat:'ロング', name:'ナチュラルロング', icon:'long',     vrm:'/assets/vrm/hair/HairSample_Female.vrm' },
-  // ── アップスタイル ──
-  { id:'h_u01', cat:'アップスタイル', name:'ポニーテール', icon:'ponytail', vrm:'/assets/vrm/hair/Sendagaya_Shino.vrm' },
-  { id:'h_u02', cat:'アップスタイル', name:'ツインテール', icon:'twintail', vrm:'/assets/vrm/hair/Vivi.vrm' },
-  { id:'h_u03', cat:'アップスタイル', name:'ハーフアップ', icon:'halfup',   vrm:'/assets/vrm/hair/Sendagaya_Shibu.vrm' },
-  { id:'h_u04', cat:'アップスタイル', name:'お団子ヘア',   icon:'bun',      vrm:'/assets/vrm/hair/Vita.vrm' },
-  { id:'h_u05', cat:'アップスタイル', name:'サイドアップ', icon:'layered',  vrm:'/assets/vrm/hair/Sakurada_Fumiriya.vrm' },
-  { id:'h_u06', cat:'アップスタイル', name:'三つ編み',     icon:'braid',    vrm:'/assets/vrm/hair/Victoria_Rubin.vrm' },
-  // ── 個性派 ──
-  { id:'h_p01', cat:'個性派', name:'ツーブロック',   icon:'asym',     vrm:'/assets/vrm/hair/AvatarSample_A.vrm' },
-  { id:'h_p02', cat:'個性派', name:'マッシュルーム', icon:'bob',      vrm:'/assets/vrm/hair/Vivi.vrm' },
-  { id:'h_p03', cat:'個性派', name:'ドレッドロング', icon:'gothic',   vrm:'/assets/vrm/hair/Darkness_Shibu.vrm' },
-  { id:'h_p04', cat:'個性派', name:'サイドブレイド', icon:'braid',    vrm:'/assets/vrm/hair/AvatarSample_B.vrm' },
-  { id:'h_p05', cat:'個性派', name:'ダークウェーブ', icon:'wavy',     vrm:'/assets/vrm/hair/Darkness_Shibu.vrm' },
-  { id:'h_p06', cat:'個性派', name:'ロマンティック', icon:'feminine', vrm:'/assets/vrm/hair/Victoria_Rubin.vrm' },
+  { id:'h_s02', cat:'ビルトイン', name:'ショートボブ', icon:'bob', vrm:'/assets/vrm/hair/AvatarSample_A.vrm' },
 ];
 
 // ── Hair part state ───────────────────────────────────────
@@ -5982,28 +5948,57 @@ async function loadHairPart(url) {
     root = gltf.scene;
   }
 
-  // 非髪と断定できるメッシュパターン（顔/体/目/口など）
-  // ^ アンカーで先頭一致のみ対象にして誤検出を防ぐ
+  // ── 診断ログ ─────────────────────────────────────────
+  const _dbgMeshes = [];
+  root.traverse(o => {
+    if (!o.isMesh && !o.isSkinnedMesh) return;
+    const matN = [].concat(o.material||[]).map(m=>m?.name||'').join('|');
+    _dbgMeshes.push(`[${o.name}] mat=${matN}`);
+  });
+  console.log('[Hair Load] meshes in VRM:', _dbgMeshes);
+  // ─────────────────────────────────────────────────────
+
+  // 髪メッシュと断定できるパターン（英語・日本語）
+  const HAIR_RE = /hair|髪|ヘア|へあ/i;
+  // 非髪ボディパーツパターン
   const NON_HAIR_RE = /^(?:face|body|skin|neck|spine|chest|hip|arm|leg|hand|finger|foot|toe|nail|eye(?!lash)|brow|iris|sclera|pupil|lip|mouth|nose|teeth|tongue|ear|cheek|forehead|jaw|chin)/i;
 
-  let hasHair = false;
   const meshList = [];
   root.traverse(obj => {
     if (!obj.isMesh && !obj.isSkinnedMesh) return;
     meshList.push(obj);
-    const nm = obj.name || '';
-    const matNames = [].concat(obj.material || []).map(m => m?.name || '');
-    const matHair = matNames.some(n => /hair/i.test(n));
-    const nmHair  = /hair/i.test(nm);
-    const nonHair = NON_HAIR_RE.test(nm) || matNames.some(n => NON_HAIR_RE.test(n));
-    // 明示的に hair か、非髪と断定できないものをすべて表示（髪 VRM の不明メッシュ = 髪扱い）
-    const isHair  = nmHair || matHair || !nonHair;
-    obj.visible = isHair;
-    if (isHair) hasHair = true;
   });
 
-  if (!hasHair) {
-    meshList.forEach(obj => { obj.visible = true; });
+  // まず「hair」と明示されているメッシュを探す
+  const strictHair = meshList.filter(obj => {
+    const nm = obj.name || '';
+    const matNames = [].concat(obj.material || []).map(m => m?.name || '');
+    return HAIR_RE.test(nm) || matNames.some(n => HAIR_RE.test(n));
+  });
+
+  if (strictHair.length > 0) {
+    // hair と断定できるメッシュのみ表示、それ以外は削除
+    const keepSet = new Set(strictHair);
+    const toRemove = meshList.filter(obj => !keepSet.has(obj));
+    toRemove.forEach(obj => {
+      obj.parent?.remove(obj);
+      obj.geometry?.dispose();
+      [].concat(obj.material || []).forEach(m => m?.dispose());
+    });
+    strictHair.forEach(obj => { obj.visible = true; });
+  } else {
+    // hair 名が全くない VRM はボディパーツのみ非表示（フォールバック）
+    const toRemove = meshList.filter(obj => {
+      const nm = obj.name || '';
+      const matNames = [].concat(obj.material || []).map(m => m?.name || '');
+      return NON_HAIR_RE.test(nm) || matNames.some(n => NON_HAIR_RE.test(n));
+    });
+    toRemove.forEach(obj => {
+      obj.parent?.remove(obj);
+      obj.geometry?.dispose();
+      [].concat(obj.material || []).forEach(m => m?.dispose());
+    });
+    meshList.filter(obj => obj.parent).forEach(obj => { obj.visible = true; });
   }
 
   // scale: 1 に正規化（VRM ローダーが非標準スケールを持つ場合に対応）
@@ -6186,6 +6181,10 @@ async function replaceHairPart(url, name) {
     setStatus('先にベースモデルを読み込んでください', true);
     return;
   }
+  // ユーザー追加ファイルのセッション Blob URL 解決
+  if (!url && _selHairId) {
+    url = _userHairSessionMap.get(_selHairId) ?? url;
+  }
   setStatus('髪型を読み込み中...');
   try {
     // 旧オーバーレイ削除（非表示にしたベース髪メッシュも復元される）
@@ -6252,63 +6251,233 @@ async function replaceHairPart(url, name) {
   }
 }
 
-function _buildHairPresetGrid(body) {
-  const hdr = document.createElement('div');
-  hdr.style.cssText = 'font-size:9px;font-weight:800;color:var(--text2);letter-spacing:.7px;text-transform:uppercase;padding:8px 13px 4px;display:flex;align-items:center;gap:8px;';
-  hdr.innerHTML = '<span>髪型プリセット</span>';
-  if (_selHairId) {
-    const clr = document.createElement('button');
-    clr.textContent = '× 外す';
-    clr.style.cssText = 'font-size:9px;padding:1px 6px;background:var(--panel2);border:1px solid var(--border);border-radius:3px;color:var(--text2);cursor:pointer;margin-left:auto;';
-    clr.addEventListener('click', () => { removeCurrentHairParts(); _selHairId = null; _buildItemsPanel(); });
-    hdr.appendChild(clr);
-  }
-  body.appendChild(hdr);
+// ── ユーザー追加髪型 (localStorage) ─────────────────────────────────
+function _getUserHairs() {
+  try { return JSON.parse(localStorage.getItem('userHairs') || '[]'); } catch { return []; }
+}
+function _saveUserHairs(list) {
+  localStorage.setItem('userHairs', JSON.stringify(list));
+}
 
-  const cats = [...new Set(HAIR_STYLE_PRESETS.map(p => p.cat))];
-  cats.forEach(cat => {
-    const catHdr = document.createElement('div');
-    catHdr.style.cssText = 'font-size:9px;color:var(--text3);padding:4px 13px 2px;font-weight:700;';
-    catHdr.textContent = cat;
-    body.appendChild(catHdr);
-    const grid = document.createElement('div');
-    grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:0 8px 6px;';
-    HAIR_STYLE_PRESETS.filter(p => p.cat === cat).forEach(preset => {
-      const card = document.createElement('div');
-      const isActive = _selHairId === preset.id;
-      card.style.cssText = `display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 2px;border-radius:6px;cursor:pointer;border:1.5px solid ${isActive ? 'var(--accent)' : 'transparent'};background:${isActive ? 'var(--accent-dim,rgba(224,82,156,0.12))' : 'var(--panel2)'};transition:border-color .15s;`;
+function _buildHairPresetGrid(body) {
+  // ── 現在選択中バッジ & 外すボタン ──
+  if (_selHairId) {
+    const activeRow = document.createElement('div');
+    activeRow.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--accent-dim,rgba(224,82,156,0.1));border-bottom:1px solid var(--border);';
+    const badge = document.createElement('span');
+    badge.style.cssText = 'flex:1;font-size:10px;color:var(--accent);font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    const allPresets = [...HAIR_STYLE_PRESETS, ..._getUserHairs()];
+    const cur = allPresets.find(p => p.id === _selHairId);
+    badge.textContent = '選択中: ' + (cur?.name ?? _selHairId);
+    const clrBtn = document.createElement('button');
+    clrBtn.textContent = '× 外す';
+    clrBtn.style.cssText = 'font-size:9px;padding:2px 8px;background:var(--panel2);border:1px solid var(--border2);border-radius:3px;color:var(--text2);cursor:pointer;flex-shrink:0;';
+    clrBtn.addEventListener('click', () => { removeCurrentHairParts(); _selHairId = null; _buildItemsPanel(); });
+    activeRow.appendChild(badge);
+    activeRow.appendChild(clrBtn);
+    body.appendChild(activeRow);
+  }
+
+  // ── セクションヘッダーユーティリティ ──
+  const secHdr = (text, extra) => {
+    const d = document.createElement('div');
+    d.style.cssText = 'font-size:9px;font-weight:800;color:var(--text2);letter-spacing:.6px;text-transform:uppercase;padding:10px 13px 4px;display:flex;align-items:center;gap:6px;';
+    const s = document.createElement('span'); s.textContent = text; d.appendChild(s);
+    if (extra) d.appendChild(extra);
+    return d;
+  };
+
+  // ── ビルトインプリセット ──
+  body.appendChild(secHdr('ビルトイン'));
+  const builtGrid = _makeHairGrid(HAIR_STYLE_PRESETS);
+  body.appendChild(builtGrid);
+
+  // ── ユーザー追加 ──
+  const userHairs = _getUserHairs();
+  const addBtn = document.createElement('button');
+  addBtn.textContent = '+ VRM / GLB を追加';
+  addBtn.style.cssText = 'font-size:9px;padding:2px 8px;background:var(--panel2);border:1px solid var(--border2);border-radius:3px;color:var(--text2);cursor:pointer;';
+  addBtn.addEventListener('click', () => _addUserHairFile(body));
+  body.appendChild(secHdr('マイ髪型', addBtn));
+
+  if (userHairs.length === 0) {
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:10px;color:var(--text3);padding:4px 13px 8px;';
+    hint.textContent = 'VRM または GLB ファイルを追加できます';
+    body.appendChild(hint);
+  } else {
+    body.appendChild(_makeHairGrid(userHairs, true));
+  }
+
+  // ── 画像参考 ──
+  const imgSecHdr = secHdr('参考画像');
+  body.appendChild(imgSecHdr);
+  _buildHairRefImageSection(body);
+
+  // ── 区切り ──
+  const sep = document.createElement('div');
+  sep.style.cssText = 'height:1px;background:var(--border);margin:6px 0;';
+  body.appendChild(sep);
+
+  // ── 3D ペイント ──
+  body.appendChild(secHdr('3D ペイント'));
+  const paintBtn = document.createElement('button');
+  paintBtn.id = 'hair-paint3d-btn';
+  paintBtn.textContent = _paint3dActive ? '✕ ペイント終了' : '3D ペイントモード';
+  paintBtn.style.cssText = 'width:calc(100% - 16px);margin:0 8px 6px;padding:7px;background:' + (_paint3dActive ? '#5a1a3a' : 'var(--panel3)') + ';border:1px solid ' + (_paint3dActive ? 'var(--accent)' : 'var(--border2)') + ';border-radius:6px;color:var(--text);font-size:11px;cursor:pointer;font-weight:600;';
+  paintBtn.addEventListener('click', () => { if (_paint3dActive) _exitPaint3d(); else _enterPaint3d(); });
+  body.appendChild(paintBtn);
+}
+
+function _makeHairGrid(presets, userMode) {
+  const grid = document.createElement('div');
+  grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:0 8px 6px;';
+  presets.forEach(preset => {
+    const card = document.createElement('div');
+    const isActive = _selHairId === preset.id;
+    card.style.cssText = `display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 2px;border-radius:6px;cursor:pointer;border:1.5px solid ${isActive ? 'var(--accent)' : 'transparent'};background:${isActive ? 'var(--accent-dim,rgba(224,82,156,0.12))' : 'var(--panel2)'};transition:border-color .15s;position:relative;`;
+
+    // サムネイル or SVGアイコン
+    if (preset.thumb) {
+      const img = document.createElement('img');
+      img.src = preset.thumb;
+      img.style.cssText = 'width:40px;height:48px;object-fit:cover;border-radius:4px;';
+      card.appendChild(img);
+    } else {
       const iconWrap = document.createElement('div');
       iconWrap.style.cssText = `width:40px;height:48px;color:${isActive ? 'var(--accent)' : 'var(--text)'};display:flex;align-items:center;justify-content:center;`;
       iconWrap.innerHTML = _HAIR_PRESET_SVG[preset.icon] || _HAIR_PRESET_SVG.short;
-      const lbl = document.createElement('div');
-      lbl.style.cssText = 'font-size:9px;text-align:center;color:var(--text2);line-height:1.2;word-break:break-all;';
-      lbl.textContent = preset.name;
       card.appendChild(iconWrap);
-      card.appendChild(lbl);
-      card.addEventListener('click', () => {
-        if (_selHairId === preset.id) { removeCurrentHairParts(); _selHairId = null; _buildItemsPanel(); }
-        else { _selHairId = preset.id; replaceHairPart(preset.vrm, preset.name); }
-      });
-      card.addEventListener('mouseenter', () => { if (_selHairId !== preset.id) card.style.borderColor = 'var(--border2)'; });
-      card.addEventListener('mouseleave', () => { if (_selHairId !== preset.id) card.style.borderColor = 'transparent'; });
-      grid.appendChild(card);
-    });
-    body.appendChild(grid);
-  });
+    }
 
-  // 3Dペイント button
-  const paintHdr = document.createElement('div');
-  paintHdr.style.cssText = 'font-size:9px;font-weight:800;color:var(--text2);letter-spacing:.7px;text-transform:uppercase;padding:10px 13px 4px;border-top:1px solid var(--border);margin-top:4px;';
-  paintHdr.textContent = '3D ペイント';
-  body.appendChild(paintHdr);
-  const paintBtn = document.createElement('button');
-  paintBtn.id = 'hair-paint3d-btn';
-  paintBtn.textContent = _paint3dActive ? '✕ ペイント終了' : '🎨 3Dペイントモード';
-  paintBtn.style.cssText = 'width:calc(100% - 16px);margin:0 8px 6px;padding:7px;background:' + (_paint3dActive ? '#5a1a3a' : 'var(--panel3)') + ';border:1px solid ' + (_paint3dActive ? 'var(--accent)' : 'var(--border2)') + ';border-radius:6px;color:var(--text);font-size:11px;cursor:pointer;font-weight:600;';
-  paintBtn.addEventListener('click', () => {
-    if (_paint3dActive) _exitPaint3d(); else _enterPaint3d();
+    const lbl = document.createElement('div');
+    lbl.style.cssText = 'font-size:9px;text-align:center;color:var(--text2);line-height:1.2;word-break:break-all;width:100%;';
+    lbl.textContent = preset.name;
+    card.appendChild(lbl);
+
+    // ユーザー追加ファイルは削除ボタン付き
+    if (userMode) {
+      const del = document.createElement('button');
+      del.textContent = '×';
+      del.style.cssText = 'position:absolute;top:1px;right:2px;font-size:9px;padding:0 3px;background:rgba(0,0,0,0.5);border:none;border-radius:2px;color:#ccc;cursor:pointer;line-height:14px;';
+      del.addEventListener('click', e => {
+        e.stopPropagation();
+        let list = _getUserHairs().filter(h => h.id !== preset.id);
+        _saveUserHairs(list);
+        if (_selHairId === preset.id) { removeCurrentHairParts(); _selHairId = null; }
+        // Blob URL 解放
+        if (preset.blobUrl) URL.revokeObjectURL(preset.blobUrl);
+        _buildItemsPanel();
+      });
+      card.appendChild(del);
+    }
+
+    card.addEventListener('click', () => {
+      if (_selHairId === preset.id) { removeCurrentHairParts(); _selHairId = null; _buildItemsPanel(); }
+      else { _selHairId = preset.id; replaceHairPart(preset.blobUrl ?? preset.vrm, preset.name); }
+    });
+    card.addEventListener('mouseenter', () => { if (_selHairId !== preset.id) card.style.borderColor = 'var(--border2)'; });
+    card.addEventListener('mouseleave', () => { if (_selHairId !== preset.id) card.style.borderColor = 'transparent'; });
+    grid.appendChild(card);
   });
-  body.appendChild(paintBtn);
+  return grid;
+}
+
+function _addUserHairFile(body) {
+  const fi = document.createElement('input');
+  fi.type = 'file'; fi.accept = '.vrm,.glb';
+  fi.addEventListener('change', () => {
+    const f = fi.files?.[0]; if (!f) return;
+    const blobUrl = URL.createObjectURL(f);
+    const name = f.name.replace(/\.(vrm|glb)$/i, '');
+    const id = 'user_' + Date.now();
+
+    // サムネイル生成: ローカル読み込み後にキャプチャは難しいので省略、アイコンはshort固定
+    const entry = { id, name, blobUrl, icon: 'short', cat: 'マイ髪型' };
+
+    // localStorage には blobUrl は保存不可（セッション内のみ有効）
+    // セッション内メモリで保持 + 表示名のみ保存
+    _userHairSessionMap.set(id, blobUrl);
+    const list = _getUserHairs();
+    list.push({ id, name, icon: 'short', cat: 'マイ髪型' });
+    _saveUserHairs(list);
+
+    _buildItemsPanel();
+    // そのまま選択
+    _selHairId = id;
+    replaceHairPart(blobUrl, name);
+  });
+  fi.click();
+}
+
+// セッション内 Blob URL マップ（localStorage には保存できないため）
+const _userHairSessionMap = new Map();
+
+// ユーザー追加髪型の URL 解決（セッション中のみ有効）
+const _origReplaceHairPart = null; // フック不要、replaceHairPart 側で _userHairSessionMap を参照
+
+function _buildHairRefImageSection(body) {
+  const refRow = document.createElement('div');
+  refRow.style.cssText = 'padding:0 10px 8px;display:flex;gap:6px;align-items:center;';
+
+  const addImgBtn = document.createElement('button');
+  addImgBtn.textContent = '+ 画像を追加';
+  addImgBtn.style.cssText = 'flex:1;padding:5px 0;background:var(--panel2);border:1px solid var(--border2);border-radius:4px;color:var(--text2);font-size:10px;font-weight:700;cursor:pointer;';
+  addImgBtn.addEventListener('click', () => {
+    const fi = document.createElement('input');
+    fi.type = 'file'; fi.accept = 'image/*';
+    fi.addEventListener('change', () => {
+      const f = fi.files?.[0]; if (!f) return;
+      const url = URL.createObjectURL(f);
+      _showHairRefImage(url, f.name);
+    });
+    fi.click();
+  });
+  refRow.appendChild(addImgBtn);
+
+  const closeImgBtn = document.createElement('button');
+  closeImgBtn.textContent = '参考消す';
+  closeImgBtn.style.cssText = 'padding:5px 8px;background:var(--panel2);border:1px solid var(--border2);border-radius:4px;color:var(--text3);font-size:10px;cursor:pointer;';
+  closeImgBtn.addEventListener('click', () => _hideHairRefImage());
+  refRow.appendChild(closeImgBtn);
+
+  body.appendChild(refRow);
+}
+
+function _showHairRefImage(url, name) {
+  _hideHairRefImage();
+  const overlay = document.createElement('div');
+  overlay.id = 'hair-ref-image-overlay';
+  overlay.style.cssText = 'position:fixed;bottom:48px;right:12px;z-index:800;background:var(--panel,#242434);border:1px solid var(--border2);border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.5);overflow:hidden;cursor:move;user-select:none;';
+
+  const titleBar = document.createElement('div');
+  titleBar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:4px 8px;background:var(--panel2);font-size:9px;color:var(--text3);';
+  const titleTxt = document.createElement('span');
+  titleTxt.textContent = '参考: ' + (name || '');
+  titleTxt.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px;';
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '×';
+  closeBtn.style.cssText = 'background:none;border:none;color:var(--text2);cursor:pointer;font-size:12px;padding:0 2px;';
+  closeBtn.addEventListener('click', () => _hideHairRefImage());
+  titleBar.appendChild(titleTxt); titleBar.appendChild(closeBtn);
+
+  const img = document.createElement('img');
+  img.src = url;
+  img.style.cssText = 'display:block;max-width:220px;max-height:300px;object-fit:contain;';
+
+  overlay.appendChild(titleBar);
+  overlay.appendChild(img);
+  document.body.appendChild(overlay);
+
+  // ドラッグ移動
+  let ox=0,oy=0,dragging=false;
+  titleBar.addEventListener('mousedown', e => { dragging=true; ox=e.clientX-overlay.offsetLeft; oy=e.clientY-overlay.offsetTop; e.preventDefault(); });
+  document.addEventListener('mousemove', e => { if(dragging){ overlay.style.left=(e.clientX-ox)+'px'; overlay.style.top=(e.clientY-oy)+'px'; overlay.style.right='auto'; overlay.style.bottom='auto'; } });
+  document.addEventListener('mouseup', () => { dragging=false; });
+}
+
+function _hideHairRefImage() {
+  document.getElementById('hair-ref-image-overlay')?.remove();
 }
 
 // ── 3D Paint ─────────────────────────────────────────────────────────
