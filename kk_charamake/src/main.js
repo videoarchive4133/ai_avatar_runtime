@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { KKCharacter } from './characterAssembler.js';
 import { HAIR_ACCESSORY_PRESETS, HAIR_SHINE_PRESETS, BASE_SHAPES, userAccessories } from './hairAccessorySystem.js';
+import { EyeController } from './faceControllers.js';
 
 // ═══════════════════════════════════════════════════════════════
 //  ステータス / ローディング (UIより先に定義)
@@ -292,6 +293,7 @@ const CATEGORIES = {
       { key: 'eye',      label: '目',         type: 'thumb_only',
         items: faceThumbItems('thumb_hitomi', EYE_IDS),
       },
+      { key: 'eye_adjust', label: '目調整', type: 'eye_adjust_panel' },
       { key: 'eyebrow',  label: '眉',         type: 'thumb_only',
         items: faceThumbItems('thumb_mayuge', EYEBROW_IDS),
       },
@@ -455,6 +457,18 @@ const hairShineState = {
   envMapIntensity: 0.30,
 };
 
+// ─── 目調整状態 ───────────────────────────────────────────────
+const _EYE_PARAMS_DEFAULT = () => ({ scale: 0, posX: 0, posY: 0, posZ: 0, rotation: 0 });
+const eyeState = {
+  syncLR: true,
+  both:  _EYE_PARAMS_DEFAULT(),
+  left:  _EYE_PARAMS_DEFAULT(),
+  right: _EYE_PARAMS_DEFAULT(),
+};
+
+// EyeController インスタンス（head attach 後に init()）
+let eyeController = null;
+
 // ═══════════════════════════════════════════════════════════════
 //  UI 描画
 // ═══════════════════════════════════════════════════════════════
@@ -499,6 +513,7 @@ function renderContent(sub) {
     case 'sliders':       buildSliderPanel(area, sub); break;
     case 'info':          buildInfoPanel(area);        break;
     case 'bezier_editor': buildBezierEditor(area);     break;
+    case 'eye_adjust_panel': buildEyeAdjustPanel(area); break;
     case 'nose_panel':      buildNosePanel(area);      break;
     case 'face_deco_panel': buildFaceDecoPanel(area);  break;
     case 'mole_panel':      buildMolePanel(area);      break;
@@ -536,6 +551,11 @@ function buildPartsGrid(area, sub) {
           // グローバル非表示中なら新しく付けた服も非表示にする
           if (_globalClothesHidden && character.parts[sub.slot]) {
             _setGroupVisible(character.parts[sub.slot], false);
+          }
+          // head を付け替えたら目コントローラを再初期化して調整値を再適用
+          if (sub.slot === 'head' && eyeController) {
+            eyeController.init();
+            _applyEyeState();
           }
         }).finally(() => setLoading(false));
       }
@@ -655,6 +675,140 @@ function buildInfoPanel(area) {
   document.getElementById('info-save')?.addEventListener('click', saveJSON);
   document.getElementById('info-load-btn')?.addEventListener('click', loadJSONFromFile);
   document.getElementById('info-init')?.addEventListener('click', initAll);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  目調整パネル
+// ═══════════════════════════════════════════════════════════════
+
+// スライダー定義: key / label / min / max / step
+const EYE_SLIDERS = [
+  { key: 'scale',    label: '目の大きさ', min: -100, max: 100, step: 1 },
+  { key: 'posY',     label: '目の高さ',   min: -100, max: 100, step: 1 },
+  { key: 'posX',     label: '左右位置',   min: -100, max: 100, step: 1 },
+  { key: 'posZ',     label: '前後位置',   min: -100, max: 100, step: 1 },
+  { key: 'rotation', label: '回転',       min: -180, max: 180, step: 1 },
+];
+
+function _initEyeControllerIfNeeded() {
+  if (!eyeController) {
+    eyeController = new EyeController(character);
+  }
+  if (character?.parts['head']) {
+    eyeController.init();
+  }
+}
+
+function _applyEyeState() {
+  if (!eyeController) return;
+  if (eyeState.syncLR) {
+    eyeController.apply(eyeState.both, 'both');
+  } else {
+    eyeController.apply(eyeState.left,  'left');
+    eyeController.apply(eyeState.right, 'right');
+  }
+}
+
+function _buildEyeSlidersSection(area, side) {
+  // side: 'both' | 'left' | 'right'
+  const params = eyeState[side];
+
+  EYE_SLIDERS.forEach(sl => {
+    const row = document.createElement('div');
+    row.className = 'sl-row';
+
+    const nm = document.createElement('span');
+    nm.className = 'sl-name';
+    nm.textContent = sl.label;
+
+    const inp = document.createElement('input');
+    inp.type = 'range';
+    inp.min  = sl.min; inp.max = sl.max; inp.step = sl.step;
+    inp.value = params[sl.key] ?? 0;
+
+    const vl = document.createElement('span');
+    vl.className = 'sl-val';
+    vl.textContent = inp.value;
+
+    inp.addEventListener('input', () => {
+      const v = parseFloat(inp.value);
+      params[sl.key] = v;
+      vl.textContent  = inp.value;
+      _applyEyeState();
+    });
+
+    row.appendChild(nm); row.appendChild(inp); row.appendChild(vl);
+    area.appendChild(row);
+  });
+}
+
+function buildEyeAdjustPanel(area) {
+  area.innerHTML = '';
+
+  _initEyeControllerIfNeeded();
+
+  // ── 左右同時編集チェックボックス ──────────────────────────
+  const syncRow = document.createElement('div');
+  syncRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+
+  const chk = document.createElement('input');
+  chk.type    = 'checkbox';
+  chk.id      = 'eye-sync-lr';
+  chk.checked = eyeState.syncLR;
+  chk.style.accentColor = 'var(--accent)';
+
+  const chkLbl = document.createElement('label');
+  chkLbl.htmlFor   = 'eye-sync-lr';
+  chkLbl.textContent = '左右同時編集';
+  chkLbl.style.cssText = 'cursor:pointer;font-size:13px;';
+
+  syncRow.appendChild(chk);
+  syncRow.appendChild(chkLbl);
+  area.appendChild(syncRow);
+
+  // ── スライダーエリア（syncLR に応じて再描画）───────────────
+  const sliderArea = document.createElement('div');
+  area.appendChild(sliderArea);
+
+  function renderSliders() {
+    sliderArea.innerHTML = '';
+    if (eyeState.syncLR) {
+      _buildEyeSlidersSection(sliderArea, 'both');
+    } else {
+      const lblL = document.createElement('div');
+      lblL.className = 'nose-sep';
+      lblL.textContent = '左目';
+      sliderArea.appendChild(lblL);
+      _buildEyeSlidersSection(sliderArea, 'left');
+
+      const lblR = document.createElement('div');
+      lblR.className = 'nose-sep';
+      lblR.textContent = '右目';
+      sliderArea.appendChild(lblR);
+      _buildEyeSlidersSection(sliderArea, 'right');
+    }
+  }
+
+  chk.addEventListener('change', () => {
+    eyeState.syncLR = chk.checked;
+    renderSliders();
+  });
+
+  renderSliders();
+
+  // ── リセットボタン ────────────────────────────────────────
+  const resetBtn = document.createElement('button');
+  resetBtn.className    = 'hbtn';
+  resetBtn.style.marginTop = '10px';
+  resetBtn.textContent  = '目調整リセット';
+  resetBtn.addEventListener('click', () => {
+    eyeState.both  = _EYE_PARAMS_DEFAULT();
+    eyeState.left  = _EYE_PARAMS_DEFAULT();
+    eyeState.right = _EYE_PARAMS_DEFAULT();
+    eyeController?.reset('both');
+    renderSliders();
+  });
+  area.appendChild(resetBtn);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -5218,7 +5372,7 @@ function buildColorPanel(slot) {
 // ═══════════════════════════════════════════════════════════════
 function saveJSON() {
   const data = {
-    version: 2,
+    version: 3,
     name: document.getElementById('chara-name')?.value || '新しいキャラ',
     state: { ...uiState },
     hairAcc: {
@@ -5234,6 +5388,12 @@ function saveJSON() {
       roughness:       hairShineState.roughness,
       metalness:       hairShineState.metalness,
       envMapIntensity: hairShineState.envMapIntensity,
+    },
+    eye: {
+      syncLR: eyeState.syncLR,
+      both:   { ...eyeState.both  },
+      left:   { ...eyeState.left  },
+      right:  { ...eyeState.right },
     },
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -5288,6 +5448,11 @@ async function applyLoadedData(d) {
     for (const [slot, item] of Object.entries(slots)) {
       if (item) await character.attach(slot, item.url);
     }
+    // head ロード後に目コントローラ初期化
+    if (slots.head) {
+      if (!eyeController) eyeController = new EyeController(character);
+      eyeController.init();
+    }
   }
 
   // 髪アクセサリー復元
@@ -5306,6 +5471,15 @@ async function applyLoadedData(d) {
   if (d.hairShine) {
     Object.assign(hairShineState, d.hairShine);
     _applyHairShine();
+  }
+
+  // 目調整復元
+  if (d.eye) {
+    eyeState.syncLR = d.eye.syncLR ?? true;
+    if (d.eye.both)  Object.assign(eyeState.both,  d.eye.both);
+    if (d.eye.left)  Object.assign(eyeState.left,  d.eye.left);
+    if (d.eye.right) Object.assign(eyeState.right, d.eye.right);
+    if (eyeController) _applyEyeState();
   }
 
   setLoading(false);
