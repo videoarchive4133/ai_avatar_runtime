@@ -299,7 +299,8 @@ const CATEGORIES = {
       },
       { key: 'eyebrow_adjust', label: '眉調整', type: 'eyebrow_adjust_panel' },
       { key: 'eyebrow_custom', label: '眉カスタム', type: 'bezier_editor' },
-      { key: 'nose',      label: '鼻',       type: 'nose_panel' },
+      { key: 'nose',        label: '鼻',       type: 'nose_panel' },
+      { key: 'nose_adjust', label: '鼻調整', type: 'nose_adjust_panel' },
       { key: 'face_deco', label: '顔デコ',  type: 'face_deco_panel' },
       { key: 'mole',      label: 'ほくろ',  type: 'mole_panel' },
       { key: 'tattoo',    label: 'タトゥー', type: 'tattoo_panel' },
@@ -508,7 +509,8 @@ function renderContent(sub) {
     case 'bezier_editor': buildBezierEditor(area);     break;
     case 'eye_adjust_panel':     buildEyeAdjustPanel(area);     break;
     case 'eyebrow_adjust_panel': buildEyebrowAdjustPanel(area); break;
-    case 'nose_panel':           buildNosePanel(area);          break;
+    case 'nose_panel':           buildNosePanel(area);           break;
+    case 'nose_adjust_panel':    buildNoseAdjustPanel(area);    break;
     case 'face_deco_panel': buildFaceDecoPanel(area);  break;
     case 'mole_panel':      buildMolePanel(area);      break;
     case 'tattoo_panel':    buildTattooPanel(area);    break;
@@ -910,6 +912,77 @@ function buildEyebrowAdjustPanel(area) {
   resetBtn.addEventListener('click', () => {
     faceEditor.eyebrow.resetState();
     renderSliders();
+  });
+  area.appendChild(resetBtn);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  鼻調整パネル（NoseController）
+// ═══════════════════════════════════════════════════════════════
+const NOSE_ADJUST_SLIDERS = [
+  { key: 'scale',       label: '鼻の大きさ',   min: -100, max: 100, step: 1 },
+  { key: 'posY',        label: '鼻の高さ',     min: -100, max: 100, step: 1 },
+  { key: 'width',       label: '鼻の幅',       min: -100, max: 100, step: 1 },
+  { key: 'posZ',        label: '鼻の前後位置', min: -100, max: 100, step: 1 },
+  { key: 'bridgeHeight',label: '鼻筋の高さ',   min: -100, max: 100, step: 1 },
+  { key: 'tipScale',    label: '鼻先の大きさ', min: -100, max: 100, step: 1 },
+  { key: 'rotation',    label: '鼻の角度',     min: -180, max: 180, step: 1 },
+];
+
+function _initNoseIfNeeded() {
+  if (!faceEditor) faceEditor = new FaceEditor(character);
+  if (character?.parts['head']) faceEditor.nose.init();
+}
+
+function _applyNoseState() {
+  faceEditor?.nose.applyState();
+}
+
+function buildNoseAdjustPanel(area) {
+  area.innerHTML = '';
+
+  _initNoseIfNeeded();
+  const noseState = faceEditor.nose.getState(); // ライブ参照
+
+  const params = noseState.params;
+
+  // ── スライダー ──────────────────────────────────────────────
+  NOSE_ADJUST_SLIDERS.forEach(sl => {
+    const row = document.createElement('div');
+    row.className = 'sl-row';
+
+    const nm = document.createElement('span');
+    nm.className = 'sl-name';
+    nm.textContent = sl.label;
+
+    const inp = document.createElement('input');
+    inp.type  = 'range';
+    inp.min   = sl.min; inp.max = sl.max; inp.step = sl.step;
+    inp.value = params[sl.key] ?? 0;
+
+    const vl = document.createElement('span');
+    vl.className = 'sl-val';
+    vl.textContent = inp.value;
+
+    inp.addEventListener('input', () => {
+      params[sl.key] = parseFloat(inp.value);
+      vl.textContent  = inp.value;
+      _applyNoseState();
+    });
+
+    row.appendChild(nm); row.appendChild(inp); row.appendChild(vl);
+    area.appendChild(row);
+  });
+
+  // ── リセットボタン ────────────────────────────────────────
+  const resetBtn = document.createElement('button');
+  resetBtn.className    = 'hbtn';
+  resetBtn.style.marginTop = '10px';
+  resetBtn.textContent  = '鼻調整リセット';
+  resetBtn.addEventListener('click', () => {
+    faceEditor.nose.resetState();
+    // スライダーを再描画するためパネルを再構築
+    buildNoseAdjustPanel(area);
   });
   area.appendChild(resetBtn);
 }
