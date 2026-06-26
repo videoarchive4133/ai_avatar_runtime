@@ -285,7 +285,7 @@ const CATEGORIES = {
       { key: 'head',    label: '輪郭',   type: 'parts', slot: 'head',
         items: [
           { label: 'なし',     url: null, thumb: null },
-          { label: 'タイプ01', url: '/models/bo_head_00.glb', thumb: '/thumbs/p_cf_head_00.png' },
+          { label: 'タイプ00', url: '/models/bo_head_00.glb', thumb: '/thumbs/p_cf_head_00.png' },
           { label: 'タイプ50', url: '/models/bo_head_50.glb', thumb: null },
         ],
       },
