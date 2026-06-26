@@ -5,6 +5,7 @@ import { HAIR_ACCESSORY_PRESETS, HAIR_SHINE_PRESETS, BASE_SHAPES, userAccessorie
 import { FaceEditor, ExpressionController, EXPRESSION_PRESETS } from './faceControllers.js';
 import { PoseController, POSE_PRESETS, POSE_BONE_GROUPS } from './poseController.js';
 import { MotionController, MOTION_PRESETS, EASING_TYPES } from './motionController.js';
+import { CameraLightController, CAMERA_PRESETS, LIGHT_PRESETS } from './cameraLightController.js';
 
 // ═══════════════════════════════════════════════════════════════
 //  ステータス / ローディング (UIより先に定義)
@@ -26,6 +27,8 @@ const viewport = document.getElementById('viewport');
 
 let renderer = null, scene = null, camera = null, controls = null;
 let character = null;
+let ambLight = null, keyLight = null, fillLight = null, rimLight = null;
+let floorMesh = null, gridHelper = null;
 
 try {
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -51,10 +54,10 @@ try {
   controls.update();
 
   // ライティング
-  const ambLight = new THREE.AmbientLight(0xc8d0ff, 0.7);
+  ambLight = new THREE.AmbientLight(0xc8d0ff, 0.7);
   scene.add(ambLight);
 
-  const keyLight = new THREE.DirectionalLight(0xfff8e8, 1.4);
+  keyLight = new THREE.DirectionalLight(0xfff8e8, 1.4);
   keyLight.position.set(1.2, 2.5, 1.8);
   keyLight.castShadow = true;
   keyLight.shadow.mapSize.set(2048, 2048);
@@ -64,27 +67,27 @@ try {
   keyLight.shadow.camera.right = keyLight.shadow.camera.top = 2;
   scene.add(keyLight);
 
-  const fillLight = new THREE.DirectionalLight(0x80a0ff, 0.5);
+  fillLight = new THREE.DirectionalLight(0x80a0ff, 0.5);
   fillLight.position.set(-1.5, 1.5, -0.5);
   scene.add(fillLight);
 
-  const rimLight = new THREE.DirectionalLight(0xffe0f0, 0.35);
+  rimLight = new THREE.DirectionalLight(0xffe0f0, 0.35);
   rimLight.position.set(0, 2, -2);
   scene.add(rimLight);
 
   // フロア
-  const floor = new THREE.Mesh(
+  floorMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(8, 8),
     new THREE.MeshStandardMaterial({ color: 0x080a10, roughness: 1 })
   );
-  floor.rotation.x = -Math.PI / 2;
-  floor.receiveShadow = true;
-  floor.userData.noPaint = true;
-  scene.add(floor);
-  const grid = new THREE.GridHelper(8, 16, 0x151a28, 0x151a28);
-  grid.position.y = 0.001;
-  grid.userData.noPaint = true;
-  scene.add(grid);
+  floorMesh.rotation.x = -Math.PI / 2;
+  floorMesh.receiveShadow = true;
+  floorMesh.userData.noPaint = true;
+  scene.add(floorMesh);
+  gridHelper = new THREE.GridHelper(8, 16, 0x151a28, 0x151a28);
+  gridHelper.position.y = 0.001;
+  gridHelper.userData.noPaint = true;
+  scene.add(gridHelper);
 
   // KKCharacter
   character = new KKCharacter(scene);
@@ -446,6 +449,12 @@ const CATEGORIES = {
       { key: 'motion_editor', label: 'モーションエディタ', type: 'motion_panel' },
     ],
   },
+  shoot: {
+    label: '撮影',
+    subs: [
+      { key: 'camera_light', label: 'カメラ・ライト', type: 'camera_light_panel' },
+    ],
+  },
   param: {
     label: '設定',
     subs: [
@@ -495,6 +504,8 @@ let expressionController = null;
 let poseController = null;
 // ─── モーションコントローラー ──────────────────────────────────
 let motionController = null;
+// ─── カメラ・ライトコントローラー ──────────────────────────────
+let cameraLightController = null;
 
 // ═══════════════════════════════════════════════════════════════
 //  UI 描画
@@ -549,6 +560,7 @@ function renderContent(sub) {
     case 'expression_panel':     buildExpressionPanel(area);    break;
     case 'pose_panel':           buildPosePanel(area);          break;
     case 'motion_panel':         buildMotionPanel(area);        break;
+    case 'camera_light_panel':  buildCameraLightPanel(area);   break;
     case 'face_deco_panel': buildFaceDecoPanel(area);  break;
     case 'mole_panel':      buildMolePanel(area);      break;
     case 'tattoo_panel':    buildTattooPanel(area);    break;
@@ -6037,6 +6049,187 @@ function buildPosePanel(area) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  カメラ・ライトエディタ
+// ═══════════════════════════════════════════════════════════════
+function _initCameraLightIfNeeded() {
+  if (!cameraLightController && camera && controls && scene) {
+    cameraLightController = new CameraLightController({
+      camera, controls, scene,
+      ambLight, keyLight, fillLight, rimLight, floorMesh, gridHelper,
+    });
+  }
+}
+
+function buildCameraLightPanel(area) {
+  area.innerHTML = '';
+  _initCameraLightIfNeeded();
+  const clc = cameraLightController;
+  if (!clc) {
+    area.textContent = '3Dビューポート未初期化';
+    return;
+  }
+
+  function sep(label) {
+    const el = document.createElement('div');
+    el.className = 'nose-sep';
+    el.textContent = label;
+    area.appendChild(el);
+  }
+
+  function row(label, control) {
+    const r = document.createElement('div');
+    r.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
+    const lbl = document.createElement('span');
+    lbl.style.cssText = 'font-size:11px;color:#8898bb;min-width:90px;flex-shrink:0;';
+    lbl.textContent = label;
+    r.appendChild(lbl);
+    r.appendChild(control);
+    area.appendChild(r);
+  }
+
+  function numSlider(min, max, step, value, onChange) {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;align-items:center;gap:6px;flex:1;';
+    const sl = document.createElement('input');
+    sl.type = 'range'; sl.min = min; sl.max = max; sl.step = step; sl.value = value;
+    sl.style.cssText = 'flex:1;accent-color:var(--accent);';
+    const val = document.createElement('span');
+    val.style.cssText = 'font-size:11px;min-width:36px;text-align:right;color:#ccc;';
+    val.textContent = value;
+    sl.addEventListener('input', () => {
+      val.textContent = parseFloat(sl.value).toFixed(step < 0.1 ? 2 : 1);
+      onChange(parseFloat(sl.value));
+    });
+    wrap.appendChild(sl); wrap.appendChild(val);
+    return wrap;
+  }
+
+  function checkbox(label, checked, onChange) {
+    const wrap = document.createElement('label');
+    wrap.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;';
+    const chk = document.createElement('input');
+    chk.type = 'checkbox'; chk.checked = checked;
+    chk.style.accentColor = 'var(--accent)';
+    chk.addEventListener('change', () => onChange(chk.checked));
+    wrap.appendChild(chk);
+    wrap.appendChild(document.createTextNode(label));
+    return wrap;
+  }
+
+  const st = clc.getState();
+
+  // ── カメラプリセット ─────────────────────────────────────────
+  sep('カメラプリセット');
+  const camPresetGrid = document.createElement('div');
+  camPresetGrid.style.cssText = 'display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:10px;';
+  area.appendChild(camPresetGrid);
+  CAMERA_PRESETS.forEach(p => {
+    const btn = document.createElement('button');
+    btn.className = 'hbtn';
+    btn.style.cssText = 'font-size:10px;padding:4px 2px;';
+    btn.textContent = p.label;
+    btn.addEventListener('click', () => {
+      clc.setCameraPreset(p.id);
+      buildCameraLightPanel(area);
+    });
+    camPresetGrid.appendChild(btn);
+  });
+
+  // ── カメラ設定 ───────────────────────────────────────────────
+  sep('カメラ設定');
+
+  // Position XYZ
+  ['x','y','z'].forEach((axis, i) => {
+    const limits = [[-5,5],[-1,5],[-5,5]][i];
+    const ctrl = numSlider(limits[0], limits[1], 0.05, st.camera.position[i], v => {
+      st.camera.position[i] = v;
+      clc._applyCamera();
+    });
+    row(`位置 ${axis.toUpperCase()}`, ctrl);
+  });
+
+  // Target XYZ
+  ['x','y','z'].forEach((axis, i) => {
+    const limits = [[-3,3],[-1,3],[-3,3]][i];
+    const ctrl = numSlider(limits[0], limits[1], 0.05, st.camera.target[i], v => {
+      st.camera.target[i] = v;
+      clc._applyCamera();
+    });
+    row(`注視点 ${axis.toUpperCase()}`, ctrl);
+  });
+
+  row('FOV', numSlider(10, 90, 1, st.camera.fov, v => clc.setCameraValue('fov', v)));
+  row('ズーム', numSlider(0.1, 5, 0.05, st.camera.zoom, v => clc.setCameraValue('zoom', v)));
+
+  // ── ライトプリセット ─────────────────────────────────────────
+  sep('ライトプリセット');
+  const ltPresetGrid = document.createElement('div');
+  ltPresetGrid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:10px;';
+  area.appendChild(ltPresetGrid);
+  LIGHT_PRESETS.forEach(p => {
+    const btn = document.createElement('button');
+    btn.className = 'hbtn';
+    btn.style.cssText = 'font-size:10px;padding:4px 2px;';
+    btn.textContent = p.label;
+    btn.addEventListener('click', () => {
+      clc.setLightPreset(p.id);
+      buildCameraLightPanel(area);
+    });
+    ltPresetGrid.appendChild(btn);
+  });
+
+  // ── ライト設定 ───────────────────────────────────────────────
+  sep('ライト設定');
+  row('メインライト強度', numSlider(0, 4, 0.05, st.light.mainIntensity, v => clc.setLightValue('mainIntensity', v)));
+  row('メインライト角度', numSlider(0, 360, 5, st.light.mainAngle, v => clc.setLightValue('mainAngle', v)));
+  row('サブライト強度',   numSlider(0, 3, 0.05, st.light.subIntensity,  v => clc.setLightValue('subIntensity', v)));
+  row('リムライト強度',   numSlider(0, 3, 0.05, st.light.rimIntensity,  v => clc.setLightValue('rimIntensity', v)));
+  row('環境光',           numSlider(0, 3, 0.05, st.light.ambient,        v => clc.setLightValue('ambient', v)));
+  row('影の濃さ',         numSlider(0, 1, 0.05, st.light.shadowDark,     v => clc.setLightValue('shadowDark', v)));
+
+  const shadowRow = document.createElement('div');
+  shadowRow.style.cssText = 'margin-bottom:10px;';
+  shadowRow.appendChild(checkbox('影を表示', st.light.shadow, v => clc.setLightValue('shadow', v)));
+  area.appendChild(shadowRow);
+
+  // ── 背景設定 ─────────────────────────────────────────────────
+  sep('背景設定');
+
+  // 背景色
+  const colorRow = document.createElement('div');
+  colorRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;';
+  const colorLbl = document.createElement('span');
+  colorLbl.style.cssText = 'font-size:11px;color:#8898bb;min-width:90px;flex-shrink:0;';
+  colorLbl.textContent = '背景色';
+  const colorPick = document.createElement('input');
+  colorPick.type = 'color'; colorPick.value = st.background.color;
+  colorPick.style.cssText = 'width:48px;height:28px;padding:0;border:1px solid #3a4060;border-radius:4px;cursor:pointer;background:none;';
+  colorPick.addEventListener('input', () => clc.setBackgroundValue('color', colorPick.value));
+  colorRow.appendChild(colorLbl); colorRow.appendChild(colorPick);
+  area.appendChild(colorRow);
+
+  const bgChkWrap = document.createElement('div');
+  bgChkWrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-bottom:12px;';
+  bgChkWrap.appendChild(checkbox('グラデーション', st.background.gradient, v => clc.setBackgroundValue('gradient', v)));
+  bgChkWrap.appendChild(checkbox('床を表示',        st.background.floor,    v => clc.setBackgroundValue('floor', v)));
+  bgChkWrap.appendChild(checkbox('グリッドを表示',  st.background.grid,     v => clc.setBackgroundValue('grid', v)));
+  area.appendChild(bgChkWrap);
+
+  // ── リセット ─────────────────────────────────────────────────
+  const resetBtn = document.createElement('button');
+  resetBtn.className = 'hbtn red';
+  resetBtn.style.cssText = 'width:100%;margin-top:4px;';
+  resetBtn.textContent = '撮影設定をリセット';
+  resetBtn.addEventListener('click', () => {
+    if (confirm('撮影設定を初期値に戻しますか？')) {
+      clc.reset();
+      buildCameraLightPanel(area);
+    }
+  });
+  area.appendChild(resetBtn);
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  モーションエディタ
 // ═══════════════════════════════════════════════════════════════
 function _initMotionIfNeeded() {
@@ -6435,8 +6628,9 @@ function saveJSON() {
     },
     face:       faceEditor          ? faceEditor.serialize()          : {},
     expression: expressionController ? expressionController.serialize() : null,
-    pose:       poseController       ? poseController.serialize()       : null,
-    motion:     motionController     ? motionController.serialize()     : null,
+    pose:        poseController        ? poseController.serialize()        : null,
+    motion:      motionController      ? motionController.serialize()      : null,
+    cameraLight: cameraLightController ? cameraLightController.serialize() : null,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = Object.assign(document.createElement('a'), {
@@ -6555,6 +6749,12 @@ async function applyLoadedData(d) {
     motionController.deserialize(d.motion);
   }
 
+  // カメラ・ライト復元（cameraLight キーがない古いデータはスキップ）
+  if (d.cameraLight) {
+    _initCameraLightIfNeeded();
+    if (cameraLightController) cameraLightController.deserialize(d.cameraLight);
+  }
+
   setLoading(false);
   renderSubTabs(currentCat);
 }
@@ -6573,6 +6773,8 @@ async function initAll() {
   if (!confirm('初期化しますか？')) return;
   motionController?.stop();
   motionController = null;
+  cameraLightController?.reset();
+  cameraLightController = null;
   character?.reset();
   Object.keys(uiState).forEach(k => delete uiState[k]);
   await initCharacter();
