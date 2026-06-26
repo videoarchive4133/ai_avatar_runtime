@@ -33,6 +33,7 @@ function buildBoneMap(root) {
 const SKIN_COLOR    = new THREE.Color(0xF0C8A5); // 標準肌色
 const SKIN_SLOTS    = new Set(['body', 'head', 'hair_front', 'hair_back', 'hair_ahoge']); // 肌色適用スロット
 const HAIR_COLOR    = new THREE.Color(0x2a1a0a); // デフォルト黒髪
+const BLACK_COLOR   = new THREE.Color(0x000000); // 黒
 
 // 服装スロット以外に肌色/髪色を自動適用
 function applyDefaultColor(group, slot) {
@@ -41,10 +42,14 @@ function applyDefaultColor(group, slot) {
     const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
     mats.forEach(m => {
       if (!m) return;
-      if (slot === 'body' || slot === 'head') {
+      if (slot === 'body') {
         m.color.set(SKIN_COLOR);
-      } else if (slot === 'hair_front' || slot === 'hair_back' || slot === 'hair_ahoge') {
-        m.color.set(HAIR_COLOR);
+      } else if (slot === 'head' ||
+                 slot === 'hair_front' ||
+                 slot === 'hair_back' ||
+                 slot === 'hair_ahoge' ||
+                 slot === 'hair_side') {
+        m.color.set(BLACK_COLOR);
       }
     });
   });
