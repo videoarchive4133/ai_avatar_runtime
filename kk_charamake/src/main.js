@@ -297,6 +297,7 @@ const CATEGORIES = {
       { key: 'eyebrow',  label: '眉',         type: 'thumb_only',
         items: faceThumbItems('thumb_mayuge', EYEBROW_IDS),
       },
+      { key: 'eyebrow_adjust', label: '眉調整', type: 'eyebrow_adjust_panel' },
       { key: 'eyebrow_custom', label: '眉カスタム', type: 'bezier_editor' },
       { key: 'nose',      label: '鼻',       type: 'nose_panel' },
       { key: 'face_deco', label: '顔デコ',  type: 'face_deco_panel' },
@@ -505,8 +506,9 @@ function renderContent(sub) {
     case 'sliders':       buildSliderPanel(area, sub); break;
     case 'info':          buildInfoPanel(area);        break;
     case 'bezier_editor': buildBezierEditor(area);     break;
-    case 'eye_adjust_panel': buildEyeAdjustPanel(area); break;
-    case 'nose_panel':      buildNosePanel(area);      break;
+    case 'eye_adjust_panel':     buildEyeAdjustPanel(area);     break;
+    case 'eyebrow_adjust_panel': buildEyebrowAdjustPanel(area); break;
+    case 'nose_panel':           buildNosePanel(area);          break;
     case 'face_deco_panel': buildFaceDecoPanel(area);  break;
     case 'mole_panel':      buildMolePanel(area);      break;
     case 'tattoo_panel':    buildTattooPanel(area);    break;
@@ -544,10 +546,10 @@ function buildPartsGrid(area, sub) {
           if (_globalClothesHidden && character.parts[sub.slot]) {
             _setGroupVisible(character.parts[sub.slot], false);
           }
-          // head を付け替えたら目コントローラを再初期化して調整値を再適用
+          // head を付け替えたら顔コントローラを再初期化して調整値を再適用
           if (sub.slot === 'head' && faceEditor) {
             faceEditor.reinitForHead();
-            _applyEyeState();
+            faceEditor.applyAll();
           }
         }).finally(() => setLoading(false));
       }
@@ -786,6 +788,127 @@ function buildEyeAdjustPanel(area) {
   resetBtn.textContent  = '目調整リセット';
   resetBtn.addEventListener('click', () => {
     faceEditor.eye.resetState();
+    renderSliders();
+  });
+  area.appendChild(resetBtn);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  眉調整パネル
+// ═══════════════════════════════════════════════════════════════
+
+const EYEBROW_SLIDERS = [
+  { key: 'posY',      label: '眉の高さ',   min: -100, max: 100, step: 1 },
+  { key: 'posX',      label: '眉の左右位置', min: -100, max: 100, step: 1 },
+  { key: 'posZ',      label: '眉の前後位置', min: -100, max: 100, step: 1 },
+  { key: 'rotation',  label: '眉の角度',   min: -180, max: 180, step: 1 },
+  { key: 'scale',     label: '眉の大きさ', min: -100, max: 100, step: 1 },
+  { key: 'thickness', label: '眉の太さ',   min: -100, max: 100, step: 1 },
+];
+
+function _initEyebrowIfNeeded() {
+  if (!faceEditor) faceEditor = new FaceEditor(character);
+  if (character?.parts['head']) faceEditor.eyebrow.init();
+}
+
+function _applyEyebrowState() {
+  faceEditor?.eyebrow.applyState();
+}
+
+function _buildEyebrowSlidersSection(area, side) {
+  const params = faceEditor.eyebrow.getState()[side];
+
+  EYEBROW_SLIDERS.forEach(sl => {
+    const row = document.createElement('div');
+    row.className = 'sl-row';
+
+    const nm = document.createElement('span');
+    nm.className = 'sl-name';
+    nm.textContent = sl.label;
+
+    const inp = document.createElement('input');
+    inp.type  = 'range';
+    inp.min   = sl.min; inp.max = sl.max; inp.step = sl.step;
+    inp.value = params[sl.key] ?? 0;
+
+    const vl = document.createElement('span');
+    vl.className = 'sl-val';
+    vl.textContent = inp.value;
+
+    inp.addEventListener('input', () => {
+      const v = parseFloat(inp.value);
+      params[sl.key] = v;
+      vl.textContent  = inp.value;
+      _applyEyebrowState();
+    });
+
+    row.appendChild(nm); row.appendChild(inp); row.appendChild(vl);
+    area.appendChild(row);
+  });
+}
+
+function buildEyebrowAdjustPanel(area) {
+  area.innerHTML = '';
+
+  _initEyebrowIfNeeded();
+  const eyebrowState = faceEditor.eyebrow.getState(); // ライブ参照
+
+  // ── 左右同時編集チェックボックス ──────────────────────────
+  const syncRow = document.createElement('div');
+  syncRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+
+  const chk = document.createElement('input');
+  chk.type    = 'checkbox';
+  chk.id      = 'eyebrow-sync-lr';
+  chk.checked = eyebrowState.syncLR;
+  chk.style.accentColor = 'var(--accent)';
+
+  const chkLbl = document.createElement('label');
+  chkLbl.htmlFor    = 'eyebrow-sync-lr';
+  chkLbl.textContent = '左右同時編集';
+  chkLbl.style.cssText = 'cursor:pointer;font-size:13px;';
+
+  syncRow.appendChild(chk);
+  syncRow.appendChild(chkLbl);
+  area.appendChild(syncRow);
+
+  // ── スライダーエリア（syncLR に応じて再描画）───────────────
+  const sliderArea = document.createElement('div');
+  area.appendChild(sliderArea);
+
+  function renderSliders() {
+    sliderArea.innerHTML = '';
+    if (eyebrowState.syncLR) {
+      _buildEyebrowSlidersSection(sliderArea, 'both');
+    } else {
+      const lblL = document.createElement('div');
+      lblL.className = 'nose-sep';
+      lblL.textContent = '左眉';
+      sliderArea.appendChild(lblL);
+      _buildEyebrowSlidersSection(sliderArea, 'left');
+
+      const lblR = document.createElement('div');
+      lblR.className = 'nose-sep';
+      lblR.textContent = '右眉';
+      sliderArea.appendChild(lblR);
+      _buildEyebrowSlidersSection(sliderArea, 'right');
+    }
+  }
+
+  chk.addEventListener('change', () => {
+    eyebrowState.syncLR = chk.checked;
+    renderSliders();
+  });
+
+  renderSliders();
+
+  // ── リセットボタン ────────────────────────────────────────
+  const resetBtn = document.createElement('button');
+  resetBtn.className    = 'hbtn';
+  resetBtn.style.marginTop = '10px';
+  resetBtn.textContent  = '眉調整リセット';
+  resetBtn.addEventListener('click', () => {
+    faceEditor.eyebrow.resetState();
     renderSliders();
   });
   area.appendChild(resetBtn);
@@ -5453,7 +5576,7 @@ async function applyLoadedData(d) {
   if (faceData) {
     if (!faceEditor) faceEditor = new FaceEditor(character);
     faceEditor.deserialize(faceData);
-    faceEditor.eye.applyState();
+    faceEditor.applyAll();
   }
 
   setLoading(false);
