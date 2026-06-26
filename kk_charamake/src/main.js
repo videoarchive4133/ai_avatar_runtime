@@ -4,6 +4,7 @@ import { KKCharacter } from './characterAssembler.js';
 import { HAIR_ACCESSORY_PRESETS, HAIR_SHINE_PRESETS, BASE_SHAPES, userAccessories } from './hairAccessorySystem.js';
 import { FaceEditor, ExpressionController, EXPRESSION_PRESETS } from './faceControllers.js';
 import { PoseController, POSE_PRESETS, POSE_BONE_GROUPS } from './poseController.js';
+import { MotionController, MOTION_PRESETS, EASING_TYPES } from './motionController.js';
 
 // ═══════════════════════════════════════════════════════════════
 //  ステータス / ローディング (UIより先に定義)
@@ -126,8 +127,12 @@ try {
   // 初回はレイアウト完了後に実行
   requestAnimationFrame(() => { onResize(); });
 
-  (function loop() {
+  let _prevLoopTs = 0;
+  (function loop(ts = 0) {
     requestAnimationFrame(loop);
+    const dt = Math.min((ts - _prevLoopTs) / 1000, 0.1);
+    _prevLoopTs = ts;
+    try { if (motionController) motionController.update(dt); } catch (_) {}
     controls.update();
     renderer.render(scene, camera);
   })();
@@ -435,6 +440,12 @@ const CATEGORIES = {
       { key: 'pose_editor', label: 'ポーズエディタ', type: 'pose_panel' },
     ],
   },
+  motion: {
+    label: 'モーション',
+    subs: [
+      { key: 'motion_editor', label: 'モーションエディタ', type: 'motion_panel' },
+    ],
+  },
   param: {
     label: '設定',
     subs: [
@@ -482,6 +493,8 @@ let faceEditor          = null;
 let expressionController = null;
 // ─── ポーズコントローラー ─────────────────────────────────────
 let poseController = null;
+// ─── モーションコントローラー ──────────────────────────────────
+let motionController = null;
 
 // ═══════════════════════════════════════════════════════════════
 //  UI 描画
@@ -535,6 +548,7 @@ function renderContent(sub) {
     case 'ear_adjust_panel':     buildEarAdjustPanel(area);     break;
     case 'expression_panel':     buildExpressionPanel(area);    break;
     case 'pose_panel':           buildPosePanel(area);          break;
+    case 'motion_panel':         buildMotionPanel(area);        break;
     case 'face_deco_panel': buildFaceDecoPanel(area);  break;
     case 'mole_panel':      buildMolePanel(area);      break;
     case 'tattoo_panel':    buildTattooPanel(area);    break;
@@ -6023,6 +6037,381 @@ function buildPosePanel(area) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  モーションエディタ
+// ═══════════════════════════════════════════════════════════════
+function _initMotionIfNeeded() {
+  _initPoseIfNeeded();
+  if (!expressionController && faceEditor) {
+    expressionController = new ExpressionController(faceEditor);
+  }
+  if (!motionController) {
+    motionController = new MotionController(poseController, expressionController);
+  } else {
+    motionController.poseCtrl = poseController;
+    motionController.exprCtrl = expressionController;
+  }
+}
+
+function buildMotionPanel(area) {
+  area.innerHTML = '';
+  _initMotionIfNeeded();
+
+  const mc = motionController;
+
+  // ── プリセットグリッド ──────────────────────────────────────
+  const presetSep = document.createElement('div');
+  presetSep.className = 'nose-sep';
+  presetSep.textContent = 'モーションプリセット';
+  area.appendChild(presetSep);
+
+  const presetGrid = document.createElement('div');
+  presetGrid.style.cssText = 'display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:10px;';
+  area.appendChild(presetGrid);
+
+  function renderPresetBtns() {
+    presetGrid.innerHTML = '';
+    const cur = mc.getPreset();
+    MOTION_PRESETS.forEach(p => {
+      const btn = document.createElement('button');
+      const active = p.id === cur;
+      btn.className = 'hbtn' + (active ? ' active' : '');
+      btn.style.cssText = 'font-size:10px;padding:4px 2px;' +
+        (active ? 'background:rgba(100,160,255,0.2);border-color:var(--accent);color:var(--accent);' : '');
+      btn.textContent = p.label;
+      btn.addEventListener('click', () => {
+        mc.applyPreset(p.id);
+        buildMotionPanel(area);
+      });
+      presetGrid.appendChild(btn);
+    });
+  }
+  renderPresetBtns();
+
+  // ── タイムライン ───────────────────────────────────────────
+  const tlSep = document.createElement('div');
+  tlSep.className = 'nose-sep';
+  tlSep.textContent = 'タイムライン';
+  area.appendChild(tlSep);
+
+  const tlWrap = document.createElement('div');
+  tlWrap.style.cssText = 'position:relative;height:32px;background:#0d1020;border:1px solid #2a3050;border-radius:4px;margin-bottom:6px;cursor:pointer;';
+  area.appendChild(tlWrap);
+
+  // 進行バー
+  const tlProgress = document.createElement('div');
+  tlProgress.style.cssText = 'position:absolute;top:0;left:0;height:100%;background:rgba(100,160,255,0.15);pointer-events:none;';
+  tlWrap.appendChild(tlProgress);
+
+  // キーフレームマーカー (再描画関数で更新)
+  function renderTlMarkers() {
+    tlWrap.querySelectorAll('.kf-marker').forEach(el => el.remove());
+    const dur = mc.getDuration();
+    mc.getKeyframes().forEach(kf => {
+      const pct = dur > 0 ? (kf.time / dur) * 100 : 0;
+      const mk = document.createElement('div');
+      mk.className = 'kf-marker';
+      mk.title = `${kf.time.toFixed(2)}s${kf.memo ? ' – ' + kf.memo : ''}`;
+      mk.style.cssText = `position:absolute;top:4px;width:10px;height:24px;background:var(--accent);border-radius:2px;left:calc(${pct}% - 5px);pointer-events:none;opacity:0.85;`;
+      tlWrap.appendChild(mk);
+    });
+  }
+
+  tlWrap.addEventListener('click', e => {
+    const rect = tlWrap.getBoundingClientRect();
+    const t = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * mc.getDuration();
+    mc.seek(t);
+    seekSlider.value = t;
+    timeDisplay.textContent = t.toFixed(2) + 's / ' + mc.getDuration().toFixed(1) + 's';
+    tlProgress.style.width = (t / mc.getDuration() * 100).toFixed(2) + '%';
+  });
+
+  renderTlMarkers();
+
+  // ── シークスライダー ───────────────────────────────────────
+  const seekSlider = document.createElement('input');
+  seekSlider.type = 'range'; seekSlider.min = 0;
+  seekSlider.max = mc.getDuration(); seekSlider.step = 0.01;
+  seekSlider.value = mc.getCurrentTime();
+  seekSlider.style.cssText = 'width:100%;margin:0 0 4px;';
+  area.appendChild(seekSlider);
+
+  const timeDisplay = document.createElement('div');
+  timeDisplay.style.cssText = 'font-size:11px;color:#8090b0;text-align:center;margin-bottom:8px;';
+  timeDisplay.textContent = mc.getCurrentTime().toFixed(2) + 's / ' + mc.getDuration().toFixed(1) + 's';
+  area.appendChild(timeDisplay);
+
+  seekSlider.addEventListener('input', () => {
+    mc.seek(parseFloat(seekSlider.value));
+    timeDisplay.textContent = mc.getCurrentTime().toFixed(2) + 's / ' + mc.getDuration().toFixed(1) + 's';
+    tlProgress.style.width = (mc.getCurrentTime() / mc.getDuration() * 100).toFixed(2) + '%';
+  });
+
+  // ── 再生コントロール ───────────────────────────────────────
+  const ctrlRow = document.createElement('div');
+  ctrlRow.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px;';
+  area.appendChild(ctrlRow);
+
+  const toStartBtn = document.createElement('button');
+  toStartBtn.className = 'hbtn'; toStartBtn.textContent = '◀◀ 先頭';
+  toStartBtn.style.cssText = 'font-size:11px;padding:4px 6px;';
+  ctrlRow.appendChild(toStartBtn);
+
+  const playBtn = document.createElement('button');
+  playBtn.className = 'hbtn';
+  playBtn.style.cssText = 'font-size:11px;padding:4px 6px;';
+  playBtn.textContent = mc.isPlaying() ? '⏸ 一時停止' : '▶ 再生';
+  ctrlRow.appendChild(playBtn);
+
+  const stopBtn = document.createElement('button');
+  stopBtn.className = 'hbtn'; stopBtn.textContent = '■ 停止';
+  stopBtn.style.cssText = 'font-size:11px;padding:4px 6px;';
+  ctrlRow.appendChild(stopBtn);
+
+  // ループ
+  const loopChk = document.createElement('input');
+  loopChk.type = 'checkbox'; loopChk.id = 'motion-loop'; loopChk.checked = mc.getLoop();
+  loopChk.style.accentColor = 'var(--accent)'; loopChk.style.marginLeft = '6px';
+  const loopLbl = document.createElement('label');
+  loopLbl.htmlFor = 'motion-loop'; loopLbl.textContent = 'ループ';
+  loopLbl.style.cssText = 'cursor:pointer;font-size:12px;';
+  ctrlRow.appendChild(loopChk); ctrlRow.appendChild(loopLbl);
+
+  loopChk.addEventListener('change', () => mc.setLoop(loopChk.checked));
+
+  toStartBtn.addEventListener('click', () => {
+    mc.stop();
+    seekSlider.value = 0;
+    timeDisplay.textContent = '0.00s / ' + mc.getDuration().toFixed(1) + 's';
+    tlProgress.style.width = '0%';
+    playBtn.textContent = '▶ 再生';
+  });
+
+  playBtn.addEventListener('click', () => {
+    if (mc.isPlaying()) {
+      mc.pause();
+      playBtn.textContent = mc.isPlaying() ? '⏸ 一時停止' : '▶ 再生';
+    } else {
+      mc.play();
+      playBtn.textContent = '⏸ 一時停止';
+    }
+  });
+
+  stopBtn.addEventListener('click', () => {
+    mc.stop();
+    seekSlider.value = 0;
+    timeDisplay.textContent = '0.00s / ' + mc.getDuration().toFixed(1) + 's';
+    tlProgress.style.width = '0%';
+    playBtn.textContent = '▶ 再生';
+  });
+
+  // ── 速度・長さ設定 ─────────────────────────────────────────
+  const settingsRow = document.createElement('div');
+  settingsRow.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;';
+  area.appendChild(settingsRow);
+
+  // 速度
+  const speedLbl = document.createElement('span');
+  speedLbl.style.cssText = 'font-size:11px;color:#8090b0;white-space:nowrap;';
+  speedLbl.textContent = '速度';
+  const speedInp = document.createElement('input');
+  speedInp.type = 'range'; speedInp.min = 0.1; speedInp.max = 3.0; speedInp.step = 0.1;
+  speedInp.value = mc.getSpeed(); speedInp.style.width = '70px';
+  const speedVal = document.createElement('span');
+  speedVal.style.cssText = 'font-size:11px;color:#8090b0;min-width:26px;';
+  speedVal.textContent = mc.getSpeed().toFixed(1) + '×';
+  speedInp.addEventListener('input', () => {
+    mc.setSpeed(parseFloat(speedInp.value));
+    speedVal.textContent = mc.getSpeed().toFixed(1) + '×';
+  });
+  settingsRow.appendChild(speedLbl); settingsRow.appendChild(speedInp); settingsRow.appendChild(speedVal);
+
+  // 長さ
+  const durLbl = document.createElement('span');
+  durLbl.style.cssText = 'font-size:11px;color:#8090b0;white-space:nowrap;';
+  durLbl.textContent = '長さ';
+  const durInp = document.createElement('input');
+  durInp.type = 'number'; durInp.min = 0.5; durInp.max = 60; durInp.step = 0.1;
+  durInp.value = mc.getDuration();
+  durInp.style.cssText = 'width:56px;background:#1e2236;border:1px solid #2a3050;border-radius:3px;color:#eee;padding:2px 4px;font-size:11px;outline:none;';
+  const durUnit = document.createElement('span');
+  durUnit.style.cssText = 'font-size:11px;color:#8090b0;';
+  durUnit.textContent = 's';
+  durInp.addEventListener('change', () => {
+    mc.setDuration(parseFloat(durInp.value));
+    seekSlider.max = mc.getDuration();
+    timeDisplay.textContent = mc.getCurrentTime().toFixed(2) + 's / ' + mc.getDuration().toFixed(1) + 's';
+    renderTlMarkers();
+  });
+  settingsRow.appendChild(durLbl); settingsRow.appendChild(durInp); settingsRow.appendChild(durUnit);
+
+  // onTimeUpdate コールバック
+  mc.onTimeUpdate = (t) => {
+    if (!seekSlider.isConnected) { mc.onTimeUpdate = null; return; }
+    seekSlider.value = t;
+    timeDisplay.textContent = t.toFixed(2) + 's / ' + mc.getDuration().toFixed(1) + 's';
+    tlProgress.style.width = (t / mc.getDuration() * 100).toFixed(2) + '%';
+    if (!mc.isPlaying()) playBtn.textContent = '▶ 再生';
+  };
+
+  // ── キーフレーム追加 ───────────────────────────────────────
+  const kfSep = document.createElement('div');
+  kfSep.className = 'nose-sep';
+  kfSep.textContent = 'キーフレーム';
+  area.appendChild(kfSep);
+
+  const addRow = document.createElement('div');
+  addRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:10px;';
+  area.appendChild(addRow);
+
+  const addTimeLbl = document.createElement('span');
+  addTimeLbl.style.cssText = 'font-size:11px;color:#8090b0;white-space:nowrap;';
+  addTimeLbl.textContent = '追加時刻(s)';
+  const addTimeInp = document.createElement('input');
+  addTimeInp.type = 'number'; addTimeInp.min = 0; addTimeInp.max = mc.getDuration(); addTimeInp.step = 0.01;
+  addTimeInp.value = mc.getCurrentTime().toFixed(2);
+  addTimeInp.style.cssText = 'width:56px;background:#1e2236;border:1px solid #2a3050;border-radius:3px;color:#eee;padding:2px 4px;font-size:11px;outline:none;';
+  const addBtn = document.createElement('button');
+  addBtn.className = 'hbtn'; addBtn.textContent = '+ 現在の状態から追加';
+  addBtn.style.cssText = 'font-size:11px;padding:4px 6px;';
+  addRow.appendChild(addTimeLbl); addRow.appendChild(addTimeInp); addRow.appendChild(addBtn);
+
+  // キーフレームリスト
+  const kfList = document.createElement('div');
+  kfList.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-bottom:12px;';
+  area.appendChild(kfList);
+
+  function renderKfList() {
+    kfList.innerHTML = '';
+    const kfs = mc.getKeyframes();
+    if (kfs.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'color:#3a4060;font-size:11px;text-align:center;padding:8px;';
+      empty.textContent = 'キーフレームなし – 上のボタンで追加してください';
+      kfList.appendChild(empty);
+      return;
+    }
+    kfs.forEach(kf => {
+      const row = document.createElement('div');
+      row.style.cssText = 'background:#0d1020;border:1px solid #2a3050;border-radius:4px;padding:6px;display:flex;flex-direction:column;gap:4px;';
+
+      // 1行目: 時間 + イージング + 削除
+      const row1 = document.createElement('div');
+      row1.style.cssText = 'display:flex;align-items:center;gap:6px;';
+
+      const dot = document.createElement('span');
+      dot.style.cssText = 'color:var(--accent);font-size:14px;';
+      dot.textContent = '●';
+
+      const tInp = document.createElement('input');
+      tInp.type = 'number'; tInp.min = 0; tInp.max = mc.getDuration(); tInp.step = 0.01;
+      tInp.value = kf.time.toFixed(2);
+      tInp.style.cssText = 'width:52px;background:#1e2236;border:1px solid #2a3050;border-radius:3px;color:#eee;padding:2px 4px;font-size:11px;outline:none;';
+      tInp.addEventListener('change', () => {
+        mc.moveKeyframe(kf.id, parseFloat(tInp.value));
+        renderKfList(); renderTlMarkers();
+      });
+
+      const tUnit = document.createElement('span');
+      tUnit.style.cssText = 'font-size:10px;color:#5a6080;';
+      tUnit.textContent = 's';
+
+      const easeSel = document.createElement('select');
+      easeSel.style.cssText = 'background:#1e2236;border:1px solid #2a3050;border-radius:3px;color:#eee;font-size:10px;padding:2px 4px;flex:1;';
+      EASING_TYPES.forEach(et => {
+        const opt = document.createElement('option');
+        opt.value = et.id; opt.textContent = et.label;
+        if (et.id === kf.easing) opt.selected = true;
+        easeSel.appendChild(opt);
+      });
+      easeSel.addEventListener('change', () => mc.updateKeyframe(kf.id, { easing: easeSel.value }));
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'hbtn'; delBtn.textContent = '削除';
+      delBtn.style.cssText = 'font-size:10px;padding:2px 5px;background:rgba(200,50,50,0.15);border-color:#a03030;color:#e06060;';
+      delBtn.addEventListener('click', () => {
+        mc.removeKeyframe(kf.id);
+        renderKfList(); renderTlMarkers();
+      });
+
+      row1.appendChild(dot); row1.appendChild(tInp); row1.appendChild(tUnit);
+      row1.appendChild(easeSel); row1.appendChild(delBtn);
+      row.appendChild(row1);
+
+      // 2行目: メモ + 現在から更新
+      const row2 = document.createElement('div');
+      row2.style.cssText = 'display:flex;align-items:center;gap:6px;';
+
+      const memoInp = document.createElement('input');
+      memoInp.type = 'text'; memoInp.placeholder = 'メモ(任意)';
+      memoInp.value = kf.memo ?? '';
+      memoInp.style.cssText = 'flex:1;background:#1e2236;border:1px solid #2a3050;border-radius:3px;color:#eee;padding:2px 6px;font-size:10px;outline:none;';
+      memoInp.addEventListener('change', () => mc.updateKeyframe(kf.id, { memo: memoInp.value }));
+
+      const capBtn = document.createElement('button');
+      capBtn.className = 'hbtn'; capBtn.textContent = '現在から更新';
+      capBtn.style.cssText = 'font-size:10px;padding:2px 5px;white-space:nowrap;';
+      capBtn.addEventListener('click', () => {
+        mc.captureToKeyframe(kf.id);
+      });
+
+      row2.appendChild(memoInp); row2.appendChild(capBtn);
+      row.appendChild(row2);
+
+      kfList.appendChild(row);
+    });
+  }
+
+  addBtn.addEventListener('click', () => {
+    mc.captureKeyframe(parseFloat(addTimeInp.value));
+    renderKfList(); renderTlMarkers();
+  });
+
+  // 追加時刻をシークに追従させる
+  mc.onTimeUpdate = (t) => {
+    if (!seekSlider.isConnected) { mc.onTimeUpdate = null; return; }
+    seekSlider.value = t;
+    timeDisplay.textContent = t.toFixed(2) + 's / ' + mc.getDuration().toFixed(1) + 's';
+    tlProgress.style.width = (t / mc.getDuration() * 100).toFixed(2) + '%';
+    if (addTimeInp.isConnected) addTimeInp.value = t.toFixed(2);
+    if (!mc.isPlaying()) playBtn.textContent = '▶ 再生';
+  };
+
+  renderKfList();
+
+  // ── ボタン行 ──────────────────────────────────────────────
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;';
+  area.appendChild(btnRow);
+
+  const resetBtn = document.createElement('button');
+  resetBtn.className = 'hbtn'; resetBtn.textContent = 'モーションリセット';
+  resetBtn.style.cssText = 'font-size:11px;';
+  resetBtn.addEventListener('click', () => {
+    if (!confirm('モーションをリセットしますか？')) return;
+    mc.stop();
+    mc.clearKeyframes();
+    mc._loop = true; mc._speed = 1.0; mc._duration = 3.0; mc._preset = '';
+    buildMotionPanel(area);
+  });
+
+  const exportBtn = document.createElement('button');
+  exportBtn.className = 'hbtn'; exportBtn.textContent = 'モーションJSONを書き出す';
+  exportBtn.style.cssText = 'font-size:11px;';
+  exportBtn.addEventListener('click', () => {
+    const data = { motion: mc.serialize() };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(blob),
+      download: `motion_${Date.now()}.json`,
+    });
+    a.click(); URL.revokeObjectURL(a.href);
+  });
+
+  btnRow.appendChild(resetBtn);
+  btnRow.appendChild(exportBtn);
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  セーブ / ロード / 初期化
 // ═══════════════════════════════════════════════════════════════
 function saveJSON() {
@@ -6047,6 +6436,7 @@ function saveJSON() {
     face:       faceEditor          ? faceEditor.serialize()          : {},
     expression: expressionController ? expressionController.serialize() : null,
     pose:       poseController       ? poseController.serialize()       : null,
+    motion:     motionController     ? motionController.serialize()     : null,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = Object.assign(document.createElement('a'), {
@@ -6153,6 +6543,18 @@ async function applyLoadedData(d) {
     poseController.applyState();
   }
 
+  // モーション復元（motion キーがない古いデータはスキップ）
+  if (d.motion) {
+    if (!poseController) { poseController = new PoseController(character); poseController.init(); }
+    if (!motionController) {
+      motionController = new MotionController(poseController, expressionController);
+    } else {
+      motionController.poseCtrl = poseController;
+      motionController.exprCtrl = expressionController;
+    }
+    motionController.deserialize(d.motion);
+  }
+
   setLoading(false);
   renderSubTabs(currentCat);
 }
@@ -6169,6 +6571,8 @@ function findSlotItem(subKey, idx) {
 
 async function initAll() {
   if (!confirm('初期化しますか？')) return;
+  motionController?.stop();
+  motionController = null;
   character?.reset();
   Object.keys(uiState).forEach(k => delete uiState[k]);
   await initCharacter();
