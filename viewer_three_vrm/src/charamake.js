@@ -4,6 +4,7 @@ import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { VRMLoaderPlugin, VRMUtils, VRMHumanBoneName } from '@pixiv/three-vrm';
+import { VersionMigrationManager, migrationManager, CURRENT_VERSION } from './versionMigration.js';
 
 // デバッグログの出力フラグ（本番時は false）
 const _DEBUG = false;
@@ -3874,14 +3875,33 @@ function _buildPoseItems(body) {
         const reader = new FileReader();
         reader.onload = e2 => {
           try {
-            const data = JSON.parse(e2.target.result);
-            Object.entries(data).forEach(([boneName, rot]) => {
-              const node = currentVrm?.humanoid?.getRawBoneNode(boneName);
-              if (node) node.rotation.set(rot.x, rot.y, rot.z, node.rotation.order);
-            });
-            if (_currentItem) { const g = VRM_BONE_GROUPS.find(g => g.id === _currentItem); if (g) { const pb = _getParamsBody(); if (pb) { pb.innerHTML = ''; _buildVRMPoseParams(g); } } }
-            setStatus('ポーズ読み込み完了'); setTimeout(() => setStatus(''), 2000);
-          } catch { setStatus('ポーズファイルエラー', true); }
+            const raw = JSON.parse(e2.target.result);
+            const report = migrationManager.importWithDiagnostics(raw);
+            if (!report.success && report.errors.length > 0 && report.warnings.length === 0) {
+              _showImportDiagnosticModal(report, f.name);
+              return;
+            }
+            const migrated = report.data ?? raw;
+            const poseData = migrated.pose ?? (report.type === 'raw_pose' ? migrated : raw);
+            const backup = _snapshotCurrentState();
+            try {
+              _applyPoseData(poseData);
+              if (report.warnings.length > 0 || report.originalVersion !== report.migratedVersion) {
+                _showImportDiagnosticModal(report, f.name);
+              } else {
+                setStatus('ポーズ読み込み完了'); setTimeout(() => setStatus(''), 2000);
+              }
+            } catch (applyErr) {
+              _restoreSnapshot(backup);
+              setStatus(`ポーズ適用失敗・ロールバック: ${applyErr.message}`, true);
+            }
+          } catch (parseErr) {
+            _showImportDiagnosticModal({
+              success: false, errors: [`JSON解析エラー: ${parseErr.message}`],
+              warnings: [], missing: [], filled: [], logs: [],
+              originalVersion: null, migratedVersion: null, type: 'unknown', data: null,
+            }, f.name);
+          }
         };
         reader.readAsText(f);
       });
@@ -4262,6 +4282,319 @@ function _buildSceneItems(body) {
   } else {
     _clearParams('オブジェクトを選択してください');
   }
+
+  // ── データ管理セクション ─────────────────────────────────
+  _buildDataManagementSection(body);
+}
+
+function _buildDataManagementSection(body) {
+  const sec = makeSection('データ管理');
+
+  // 保存ボタン
+  const saveRow = document.createElement('div');
+  saveRow.style.cssText = 'display:flex;gap:4px;padding:4px 10px 6px;';
+  const saveBtn = document.createElement('button');
+  saveBtn.textContent = 'キャラクターデータ保存';
+  saveBtn.style.cssText = 'flex:1;padding:5px 0;background:var(--accent-dim,rgba(224,82,156,0.14));border:1px solid var(--accent,#e0529c);border-radius:3px;color:var(--accent,#e0529c);font-size:10px;font-weight:700;cursor:pointer;';
+  saveBtn.addEventListener('click', () => _exportCharacterData());
+  saveRow.appendChild(saveBtn);
+  sec.appendChild(saveRow);
+
+  // インポート診断ボタン
+  const diagRow = document.createElement('div');
+  diagRow.style.cssText = 'display:flex;gap:4px;padding:0 10px 6px;';
+  const diagBtn = document.createElement('button');
+  diagBtn.textContent = 'インポート診断';
+  diagBtn.style.cssText = 'flex:1;padding:5px 0;background:var(--panel2);border:1px solid var(--border2);border-radius:3px;color:var(--text2);font-size:10px;font-weight:700;cursor:pointer;';
+  diagBtn.addEventListener('click', () => {
+    const fi = document.createElement('input');
+    fi.type = 'file'; fi.accept = '.json';
+    fi.addEventListener('change', () => {
+      const f = fi.files?.[0]; if (!f) return;
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const raw = JSON.parse(e.target.result);
+          const report = migrationManager.importWithDiagnostics(raw);
+          _showImportDiagnosticModal(report, f.name);
+        } catch (err) {
+          _showImportDiagnosticModal({
+            success: false, errors: [`JSON解析エラー: ${err.message}`],
+            warnings: [], missing: [], filled: [], logs: [],
+            originalVersion: null, migratedVersion: null, type: 'unknown', data: null,
+          }, f.name);
+        }
+      };
+      reader.readAsText(f);
+    });
+    fi.click();
+  });
+  diagRow.appendChild(diagBtn);
+  sec.appendChild(diagRow);
+
+  body.appendChild(sec);
+}
+
+function _exportCharacterData() {
+  // 現在のシーン状態をキャプチャ
+  const poseData = {};
+  if (currentVrm?.humanoid) {
+    const boneGroups = typeof VRM_BONE_GROUPS !== 'undefined' ? VRM_BONE_GROUPS : [];
+    boneGroups.forEach(g => (g.bones || []).forEach(def => {
+      const node = currentVrm.humanoid.getRawBoneNode(def.name);
+      if (node) poseData[def.name] = { x: node.rotation.x, y: node.rotation.y, z: node.rotation.z };
+    }));
+  }
+  const expressionData = {};
+  if (currentVrm?.expressionManager) {
+    const em = currentVrm.expressionManager;
+    Object.keys(em.expressionMap || {}).forEach(n => { expressionData[n] = em.getValue(n) ?? 0; });
+  }
+  const data = {
+    version: CURRENT_VERSION,
+    exportedAt: new Date().toISOString(),
+    type: 'charamake',
+    body: {},
+    hair: { style: typeof _selHairId !== 'undefined' ? _selHairId : null },
+    clothes: {},
+    hairAcc: null,
+    hairShine: null,
+    face: { eye: {}, eyebrow: {}, nose: {}, mouth: {}, faceShape: {}, ear: {} },
+    expression: Object.keys(expressionData).length > 0 ? expressionData : null,
+    pose: Object.keys(poseData).length > 0 ? poseData : null,
+    motion: null,
+    cameraLight: null,
+    scene: null,
+    presets: null,
+  };
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `character_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  setStatus('キャラクターデータを保存しました'); setTimeout(() => setStatus(''), 2000);
+}
+
+function _showImportDiagnosticModal(report, filename) {
+  // 既存モーダルを削除
+  document.getElementById('import-diag-modal')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'import-diag-modal';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;';
+
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--panel,#242434);border:1px solid var(--border2,rgba(255,255,255,0.1));border-radius:10px;padding:20px 22px;width:480px;max-width:95vw;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.7);font-size:11px;';
+
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:13px;font-weight:700;color:var(--text-bright,#eeeeff);margin-bottom:14px;display:flex;align-items:center;gap:8px;';
+  title.innerHTML = `<span style="color:${report.success ? '#4ade80' : '#f87171'}">${report.success ? '✓' : '✕'}</span> インポート診断 <span style="font-size:10px;color:var(--text3);font-weight:400;">${filename ?? ''}</span>`;
+  box.appendChild(title);
+
+  const row = (label, value, color) => {
+    const d = document.createElement('div');
+    d.style.cssText = 'display:flex;gap:8px;padding:3px 0;border-bottom:1px solid var(--border,rgba(255,255,255,0.06));align-items:baseline;';
+    const lbl = document.createElement('span');
+    lbl.style.cssText = 'color:var(--text3);min-width:130px;flex-shrink:0;';
+    lbl.textContent = label;
+    const val = document.createElement('span');
+    val.style.cssText = `color:${color ?? 'var(--text)'};word-break:break-all;`;
+    val.textContent = value ?? '—';
+    d.appendChild(lbl); d.appendChild(val);
+    return d;
+  };
+
+  box.appendChild(row('読込バージョン', report.originalVersion != null ? `v${report.originalVersion}` : '不明', '#94a3b8'));
+  box.appendChild(row('データ種別', report.type, '#94a3b8'));
+  box.appendChild(row('移行後バージョン', report.migratedVersion != null ? `v${report.migratedVersion}` : '—', report.success ? '#4ade80' : '#94a3b8'));
+
+  if (report.missing.length > 0) {
+    box.appendChild(row('不足項目', report.missing.join(', '), '#fbbf24'));
+  }
+  if (report.filled.length > 0) {
+    box.appendChild(row('自動補完した項目', report.filled.join(', '), '#34d399'));
+  }
+
+  if (report.warnings.length > 0) {
+    const warnSec = document.createElement('div');
+    warnSec.style.cssText = 'margin-top:10px;';
+    const wHdr = document.createElement('div');
+    wHdr.style.cssText = 'color:#fbbf24;font-weight:700;margin-bottom:4px;';
+    wHdr.textContent = `⚠ 警告 (${report.warnings.length})`;
+    warnSec.appendChild(wHdr);
+    report.warnings.forEach(w => {
+      const d = document.createElement('div');
+      d.style.cssText = 'color:#fbbf24;padding:2px 0 2px 8px;border-left:2px solid #fbbf24;margin-bottom:2px;word-break:break-all;';
+      d.textContent = w;
+      warnSec.appendChild(d);
+    });
+    box.appendChild(warnSec);
+  }
+
+  if (report.errors.length > 0) {
+    const errSec = document.createElement('div');
+    errSec.style.cssText = 'margin-top:10px;';
+    const eHdr = document.createElement('div');
+    eHdr.style.cssText = 'color:#f87171;font-weight:700;margin-bottom:4px;';
+    eHdr.textContent = `✕ エラー (${report.errors.length})`;
+    errSec.appendChild(eHdr);
+    report.errors.forEach(e => {
+      const d = document.createElement('div');
+      d.style.cssText = 'color:#f87171;padding:2px 0 2px 8px;border-left:2px solid #f87171;margin-bottom:2px;word-break:break-all;';
+      d.textContent = e;
+      errSec.appendChild(d);
+    });
+    box.appendChild(errSec);
+  }
+
+  // ログ
+  if (report.logs && report.logs.length > 0) {
+    const logToggle = document.createElement('details');
+    logToggle.style.cssText = 'margin-top:10px;';
+    const logSum = document.createElement('summary');
+    logSum.style.cssText = 'color:var(--text3);cursor:pointer;font-size:10px;';
+    logSum.textContent = `移行ログ (${report.logs.length})`;
+    logToggle.appendChild(logSum);
+    const logPre = document.createElement('pre');
+    logPre.style.cssText = 'font-size:9px;color:var(--text2);margin-top:4px;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow-y:auto;background:var(--panel2);padding:6px;border-radius:4px;';
+    logPre.textContent = report.logs.map(l => `[${l.level.toUpperCase()}] ${l.msg}`).join('\n');
+    logToggle.appendChild(logPre);
+    box.appendChild(logToggle);
+  }
+
+  // ボタン行
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:8px;margin-top:16px;';
+
+  if (report.success && report.data) {
+    const loadBtn = document.createElement('button');
+    loadBtn.textContent = '読込実行';
+    loadBtn.style.cssText = 'flex:1;padding:7px 0;background:var(--accent,#e0529c);border:none;border-radius:6px;color:#fff;font-size:11px;font-weight:700;cursor:pointer;';
+    loadBtn.addEventListener('click', () => {
+      _applyImportedData(report.data, report.type);
+      overlay.remove();
+    });
+    btnRow.appendChild(loadBtn);
+  } else if (report.warnings.length > 0 && report.errors.length === 0 && report.data) {
+    const loadBtn = document.createElement('button');
+    loadBtn.textContent = '警告を無視して読込';
+    loadBtn.style.cssText = 'flex:1;padding:7px 0;background:#d97706;border:none;border-radius:6px;color:#fff;font-size:11px;font-weight:700;cursor:pointer;';
+    loadBtn.addEventListener('click', () => {
+      _applyImportedData(report.data, report.type);
+      overlay.remove();
+    });
+    btnRow.appendChild(loadBtn);
+  }
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'キャンセル';
+  cancelBtn.style.cssText = 'flex:1;padding:7px 0;background:var(--panel2);border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:11px;font-weight:700;cursor:pointer;';
+  cancelBtn.addEventListener('click', () => overlay.remove());
+  btnRow.appendChild(cancelBtn);
+  box.appendChild(btnRow);
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+function _applyImportedData(data, type) {
+  // 読込前に現状をバックアップ
+  const backup = _snapshotCurrentState();
+  try {
+    if (type === 'pose' || type === 'raw_pose') {
+      _applyPoseData(data.pose ?? data);
+      setStatus('ポーズを読み込みました'); setTimeout(() => setStatus(''), 2000);
+    } else if (type === 'expression') {
+      _applyExpressionData(data.snapshot ?? {}, data.name ?? 'imported');
+      setStatus('表情を読み込みました'); setTimeout(() => setStatus(''), 2000);
+    } else if (type === 'charamake') {
+      _applyCharamakeData(data);
+      setStatus(`キャラクターデータを読み込みました (v${data.version ?? '?'})`); setTimeout(() => setStatus(''), 3000);
+    } else {
+      setStatus('このデータ形式は直接適用できません', true);
+    }
+  } catch (e) {
+    console.error('[ImportMigration] apply failed, rolling back:', e);
+    _restoreSnapshot(backup);
+    setStatus(`読込失敗・ロールバックしました: ${e.message}`, true);
+  }
+}
+
+function _snapshotCurrentState() {
+  const snap = {};
+  try {
+    // ポーズ
+    if (currentVrm?.humanoid) {
+      snap.pose = {};
+      const boneGroups = typeof VRM_BONE_GROUPS !== 'undefined' ? VRM_BONE_GROUPS : [];
+      boneGroups.forEach(g => (g.bones || []).forEach(def => {
+        const node = currentVrm.humanoid.getRawBoneNode(def.name);
+        if (node) snap.pose[def.name] = { x: node.rotation.x, y: node.rotation.y, z: node.rotation.z };
+      }));
+    }
+    // 表情
+    if (currentVrm?.expressionManager) {
+      snap.expression = {};
+      const em = currentVrm.expressionManager;
+      Object.keys(em.expressionMap || {}).forEach(n => { snap.expression[n] = em.getValue(n) ?? 0; });
+    }
+  } catch (e) { console.warn('[Snapshot]', e); }
+  return snap;
+}
+
+function _restoreSnapshot(snap) {
+  try {
+    if (snap.pose) _applyPoseData(snap.pose);
+    if (snap.expression) {
+      const em = currentVrm?.expressionManager;
+      if (em) Object.entries(snap.expression).forEach(([k, v]) => { try { em.setValue(k, v); } catch {} });
+    }
+  } catch (e) { console.warn('[Restore]', e); }
+}
+
+function _applyPoseData(poseData) {
+  if (!poseData || typeof poseData !== 'object') return;
+  if (!currentVrm?.humanoid) return;
+  Object.entries(poseData).forEach(([boneName, rot]) => {
+    const node = currentVrm.humanoid.getRawBoneNode(boneName);
+    if (node && rot) node.rotation.set(rot.x ?? 0, rot.y ?? 0, rot.z ?? 0, node.rotation.order);
+  });
+  // UIリフレッシュ
+  const ib = _getItemsBody();
+  if (ib && _currentItem) {
+    const boneGroups = typeof VRM_BONE_GROUPS !== 'undefined' ? VRM_BONE_GROUPS : [];
+    const g = boneGroups.find(g => g.id === _currentItem);
+    if (g) { const pb = _getParamsBody(); if (pb) { pb.innerHTML = ''; _buildVRMPoseParams(g); } }
+  }
+}
+
+function _applyExpressionData(snapshot, name) {
+  if (!snapshot || typeof snapshot !== 'object') return;
+  if (!window._customExpressions) window._customExpressions = {};
+  window._customExpressions[name] = snapshot;
+  const em = currentVrm?.expressionManager;
+  if (em) {
+    Object.entries(snapshot).forEach(([k, v]) => {
+      if (!k.startsWith('__morphs__')) { try { em.setValue(k, v); } catch {} }
+    });
+  }
+}
+
+function _applyCharamakeData(data) {
+  // 髪型
+  if (data.hair?.style && typeof _selHairId !== 'undefined') {
+    _selHairId = data.hair.style;
+  }
+  // 表情
+  if (data.expression && currentVrm?.expressionManager) {
+    const em = currentVrm.expressionManager;
+    Object.entries(data.expression).forEach(([k, v]) => { try { em.setValue(k, v); } catch {} });
+  }
+  // ポーズ
+  if (data.pose) _applyPoseData(data.pose);
 }
 
 function _buildSceneParams() {
@@ -5138,12 +5471,30 @@ function _buildCustomExprSection(body) {
       const reader = new FileReader();
       reader.onload = e => {
         try {
-          const data = JSON.parse(e.target.result);
+          const raw = JSON.parse(e.target.result);
+          const report = migrationManager.importWithDiagnostics(raw);
+          if (!report.success && report.errors.length > 0 && report.warnings.length === 0) {
+            _showImportDiagnosticModal(report, f.name);
+            return;
+          }
+          const migrated = report.data ?? raw;
+          const name     = migrated.name ?? '表情';
+          const snapshot = migrated.snapshot ?? {};
           if (!window._customExpressions) window._customExpressions = {};
-          window._customExpressions[data.name] = data.snapshot;
+          window._customExpressions[name] = snapshot;
           const b = _getItemsBody(); if (b) { b.innerHTML = ''; _buildExprItems(b); }
-          setStatus(`表情「${data.name}」をインポートしました`); setTimeout(() => setStatus(''), 2000);
-        } catch(err) { setStatus('JSONの読込に失敗しました', true); }
+          if (report.warnings.length > 0) {
+            _showImportDiagnosticModal(report, f.name);
+          } else {
+            setStatus(`表情「${name}」をインポートしました`); setTimeout(() => setStatus(''), 2000);
+          }
+        } catch(err) {
+          _showImportDiagnosticModal({
+            success: false, errors: [`JSON解析エラー: ${err.message}`],
+            warnings: [], missing: [], filled: [], logs: [],
+            originalVersion: null, migratedVersion: null, type: 'unknown', data: null,
+          }, f.name);
+        }
       };
       reader.readAsText(f);
     });
