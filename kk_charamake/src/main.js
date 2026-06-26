@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { KKCharacter } from './characterAssembler.js';
 import { HAIR_ACCESSORY_PRESETS, HAIR_SHINE_PRESETS, BASE_SHAPES, userAccessories } from './hairAccessorySystem.js';
-import { FaceEditor } from './faceControllers.js';
+import { FaceEditor, ExpressionController, EXPRESSION_PRESETS } from './faceControllers.js';
 
 // ═══════════════════════════════════════════════════════════════
 //  ステータス / ローディング (UIより先に定義)
@@ -422,6 +422,12 @@ const CATEGORIES = {
       },
     ],
   },
+  expression: {
+    label: '表情',
+    subs: [
+      { key: 'expression_editor', label: '表情エディタ', type: 'expression_panel' },
+    ],
+  },
   param: {
     label: '設定',
     subs: [
@@ -463,7 +469,10 @@ const hairShineState = {
 
 // ─── 顔パーツ編集（FaceEditor） ──────────────────────────────
 // head attach 後に faceEditor.reinitForHead() で初期化する
-let faceEditor = null;
+let faceEditor          = null;
+// ─── 表情コントローラー ───────────────────────────────────────
+// faceEditor の eye/eyebrow に表情デルタを重ね掛けする
+let expressionController = null;
 
 // ═══════════════════════════════════════════════════════════════
 //  UI 描画
@@ -515,6 +524,7 @@ function renderContent(sub) {
     case 'nose_adjust_panel':    buildNoseAdjustPanel(area);    break;
     case 'face_shape_panel':     buildFaceShapePanel(area);     break;
     case 'ear_adjust_panel':     buildEarAdjustPanel(area);     break;
+    case 'expression_panel':     buildExpressionPanel(area);    break;
     case 'face_deco_panel': buildFaceDecoPanel(area);  break;
     case 'mole_panel':      buildMolePanel(area);      break;
     case 'tattoo_panel':    buildTattooPanel(area);    break;
@@ -695,8 +705,13 @@ function _initFaceEditorIfNeeded() {
   if (character?.parts['head']) faceEditor.eye.init();
 }
 
+function _reapplyExpression() {
+  expressionController?.applyState();
+}
+
 function _applyEyeState() {
   faceEditor?.eye.applyState();
+  _reapplyExpression();
 }
 
 function _buildEyeSlidersSection(area, side) {
@@ -819,6 +834,7 @@ function _initEyebrowIfNeeded() {
 
 function _applyEyebrowState() {
   faceEditor?.eyebrow.applyState();
+  _reapplyExpression();
 }
 
 function _buildEyebrowSlidersSection(area, side) {
@@ -5735,6 +5751,116 @@ function buildColorPanel(slot) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  表情エディタパネル（ExpressionController）
+// ═══════════════════════════════════════════════════════════════
+
+const EXPRESSION_SLIDERS = [
+  { key: 'smile',      label: '笑顔',    min: 0,    max: 100, step: 1 },
+  { key: 'anger',      label: '怒り',    min: 0,    max: 100, step: 1 },
+  { key: 'sad',        label: '悲しみ',  min: 0,    max: 100, step: 1 },
+  { key: 'surprise',   label: '驚き',    min: 0,    max: 100, step: 1 },
+  { key: 'blush',      label: '照れ',    min: 0,    max: 100, step: 1 },
+  { key: 'sleepy',     label: '眠たさ',  min: 0,    max: 100, step: 1 },
+  { key: 'eyeClose',   label: '目の閉じ', min: 0,   max: 100, step: 1 },
+  { key: 'mouthOpen',  label: '口の開き', min: 0,   max: 100, step: 1 },
+  { key: 'mouthCorner',label: '口角',    min: -100, max: 100, step: 1 },
+];
+
+function _initExpressionIfNeeded() {
+  if (!faceEditor) faceEditor = new FaceEditor(character);
+  if (!expressionController || expressionController.faceEditor !== faceEditor) {
+    expressionController = new ExpressionController(faceEditor);
+  }
+}
+
+function buildExpressionPanel(area) {
+  area.innerHTML = '';
+  _initExpressionIfNeeded();
+
+  // ── プリセットグリッド ─────────────────────────────────────
+  const presetSep = document.createElement('div');
+  presetSep.className = 'nose-sep';
+  presetSep.textContent = '表情プリセット';
+  area.appendChild(presetSep);
+
+  const presetGrid = document.createElement('div');
+  presetGrid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:12px;';
+  area.appendChild(presetGrid);
+
+  function renderPresets() {
+    presetGrid.innerHTML = '';
+    const currentPreset = expressionController.getPreset();
+    EXPRESSION_PRESETS.forEach(p => {
+      const btn = document.createElement('button');
+      btn.className = 'hbtn' + (p.id === currentPreset ? ' active' : '');
+      btn.style.cssText = 'font-size:11px;padding:4px 2px;' +
+        (p.id === currentPreset ? 'background:rgba(100,160,255,0.2);border-color:var(--accent);color:var(--accent);' : '');
+      btn.textContent = p.label;
+      btn.addEventListener('click', () => {
+        expressionController.setPreset(p.id);
+        expressionController.applyState();
+        buildExpressionPanel(area);
+      });
+      presetGrid.appendChild(btn);
+    });
+  }
+  renderPresets();
+
+  // ── スライダー ──────────────────────────────────────────────
+  const sliderSep = document.createElement('div');
+  sliderSep.className = 'nose-sep';
+  sliderSep.textContent = '表情スライダー';
+  area.appendChild(sliderSep);
+
+  const vals = expressionController.getValues();
+
+  EXPRESSION_SLIDERS.forEach(sl => {
+    const row = document.createElement('div');
+    row.className = 'sl-row';
+
+    const nm = document.createElement('span');
+    nm.className = 'sl-name';
+    nm.textContent = sl.label;
+
+    const inp = document.createElement('input');
+    inp.type  = 'range';
+    inp.min   = sl.min; inp.max = sl.max; inp.step = sl.step;
+    inp.value = vals[sl.key] ?? 0;
+
+    const vl = document.createElement('span');
+    vl.className = 'sl-val';
+    vl.textContent = inp.value;
+
+    inp.addEventListener('input', () => {
+      expressionController.setValue(sl.key, parseFloat(inp.value));
+      vl.textContent = inp.value;
+      expressionController.applyState();
+      // プリセットのハイライトをクリア
+      presetGrid.querySelectorAll('.hbtn').forEach(b => {
+        b.classList.remove('active');
+        b.style.background = '';
+        b.style.borderColor = '';
+        b.style.color = '';
+      });
+    });
+
+    row.appendChild(nm); row.appendChild(inp); row.appendChild(vl);
+    area.appendChild(row);
+  });
+
+  // ── リセットボタン ────────────────────────────────────────
+  const resetBtn = document.createElement('button');
+  resetBtn.className    = 'hbtn';
+  resetBtn.style.marginTop = '12px';
+  resetBtn.textContent  = '表情リセット';
+  resetBtn.addEventListener('click', () => {
+    expressionController.resetState();
+    buildExpressionPanel(area);
+  });
+  area.appendChild(resetBtn);
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  セーブ / ロード / 初期化
 // ═══════════════════════════════════════════════════════════════
 function saveJSON() {
@@ -5756,7 +5882,8 @@ function saveJSON() {
       metalness:       hairShineState.metalness,
       envMapIntensity: hairShineState.envMapIntensity,
     },
-    face: faceEditor ? faceEditor.serialize() : {},
+    face:       faceEditor          ? faceEditor.serialize()          : {},
+    expression: expressionController ? expressionController.serialize() : null,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = Object.assign(document.createElement('a'), {
@@ -5841,6 +5968,16 @@ async function applyLoadedData(d) {
     if (!faceEditor) faceEditor = new FaceEditor(character);
     faceEditor.deserialize(faceData);
     faceEditor.applyAll();
+  }
+
+  // 表情復元（expression キーがない古いデータはスキップ）
+  if (d.expression) {
+    if (!faceEditor) faceEditor = new FaceEditor(character);
+    if (!expressionController || expressionController.faceEditor !== faceEditor) {
+      expressionController = new ExpressionController(faceEditor);
+    }
+    expressionController.deserialize(d.expression);
+    expressionController.applyState();
   }
 
   setLoading(false);

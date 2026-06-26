@@ -818,6 +818,7 @@ export class FaceEditor {
     this.faceShape = new FaceShapeController(character);
     this.ear       = new EarController(character);
     // this.mouth = new MouthController(character); // 未実装
+    // NOTE: ExpressionController はこの FaceEditor インスタンスを受け取って別途生成する
   }
 
   // head が付け替えられたあとに呼ぶ（ボーン参照を更新）
@@ -866,5 +867,164 @@ export class FaceEditor {
     if (data.nose)      this.nose.deserialize(data.nose);
     if (data.faceShape) this.faceShape.deserialize(data.faceShape);
     if (data.ear)       this.ear.deserialize(data.ear);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ExpressionController  — 表情の重ね掛けコントローラー
+//
+//  設計:
+//    FaceEditor の eye / eyebrow に、表情スライダー値から算出した
+//    デルタ（差分）を加算して骨を動かす。
+//    FaceEditor の _state は変更せず、骨だけ上書きするので
+//    「顔の基本調整」と「表情」を独立して管理できる。
+//
+//    適用順: faceEditor.applyAll() → expressionController.applyState()
+//    これを守ることで表情が常に基本調整の上に重なる。
+// ═══════════════════════════════════════════════════════════════
+
+// ── params を加算合成（表情デルタを基本調整パラメータに重ねる）──
+function _mergeExprParams(base, delta) {
+  const result = { ...base };
+  for (const k in delta) {
+    if (typeof delta[k] === 'number') result[k] = (result[k] ?? 0) + delta[k];
+  }
+  return result;
+}
+
+// ── 表情スライダー値 → 目デルタ ────────────────────────────────
+function _eyeDeltaFromExpr(vals) {
+  const t = k => (vals[k] ?? 0) / 100;
+  return {
+    scale:    -22 * t('smile') - 18 * t('anger') + 40 * t('surprise') - 55 * t('sleepy') - 95 * t('eyeClose'),
+    posY:      6  * t('surprise') - 5 * t('sad'),
+    posX:      0,
+    posZ:      0,
+    rotation:  0,
+  };
+}
+
+// ── 表情スライダー値 → 眉デルタ ────────────────────────────────
+function _eyebrowDeltaFromExpr(vals) {
+  const t = k => (vals[k] ?? 0) / 100;
+  return {
+    scale:     0,
+    posX:      0,
+    posY:      12 * t('smile') - 20 * t('anger') - 8 * t('sad') + 28 * t('surprise') + 5 * t('blush') - 12 * t('sleepy'),
+    posZ:      0,
+    rotation:  -35 * t('anger') + 30 * t('sad'),
+    thickness:  0,
+  };
+}
+
+// ── 表情プリセット定義 ──────────────────────────────────────────
+export const EXPRESSION_PRESETS = [
+  { id: 'normal',    label: '通常',       values: {} },
+  { id: 'smile',     label: '笑顔',       values: { smile: 80, blush: 20, mouthCorner: 50, mouthOpen: 15 } },
+  { id: 'anger',     label: '怒り',       values: { anger: 85, mouthCorner: -55 } },
+  { id: 'cry',       label: '泣き',       values: { sad: 85, blush: 40, eyeClose: 20, mouthOpen: 25, mouthCorner: -30 } },
+  { id: 'surprise',  label: '驚き',       values: { surprise: 90, mouthOpen: 55 } },
+  { id: 'blush',     label: '照れ',       values: { blush: 90, smile: 35, mouthCorner: 25 } },
+  { id: 'jito',      label: 'ジト目',     values: { sleepy: 65, anger: 25, mouthCorner: -15 } },
+  { id: 'sleepy',    label: '眠そう',     values: { sleepy: 90, eyeClose: 35, mouthOpen: 10 } },
+  { id: 'wink_l',    label: 'ウィンク左', values: { smile: 55, mouthCorner: 35 }, winkL: true },
+  { id: 'wink_r',    label: 'ウィンク右', values: { smile: 55, mouthCorner: 35 }, winkR: true },
+  { id: 'heart',     label: 'ハート目',   values: { smile: 70, blush: 45, surprise: 20 } },
+];
+
+function _defaultExprValues() {
+  return { smile: 0, anger: 0, sad: 0, surprise: 0, blush: 0, sleepy: 0, eyeClose: 0, mouthOpen: 0, mouthCorner: 0 };
+}
+
+export class ExpressionController {
+  constructor(faceEditor) {
+    this.faceEditor = faceEditor;
+    this._preset    = 'normal';
+    this._values    = _defaultExprValues();
+    this._winkL     = false;
+    this._winkR     = false;
+  }
+
+  setPreset(id) {
+    const preset = EXPRESSION_PRESETS.find(p => p.id === id);
+    if (!preset) return;
+    this._preset = id;
+    this._values = { ..._defaultExprValues(), ...preset.values };
+    this._winkL  = preset.winkL ?? false;
+    this._winkR  = preset.winkR ?? false;
+  }
+
+  setValue(key, value) {
+    this._values[key] = value;
+    this._winkL = false;
+    this._winkR = false;
+    this._preset = '';
+  }
+
+  getValue(key)  { return this._values[key] ?? 0; }
+  getValues()    { return this._values; }
+  getPreset()    { return this._preset; }
+
+  applyState() {
+    const fe = this.faceEditor;
+    if (!fe) return;
+
+    // ── 目へのオーバーレイ ────────────────────────────────────
+    const eyeDelta = _eyeDeltaFromExpr(this._values);
+    const eyeState = fe.eye.getState();
+    if (eyeState.syncLR) {
+      const base = eyeState.both;
+      fe.eye._applySide('L', this._winkL
+        ? _mergeExprParams(base, { ...eyeDelta, scale: eyeDelta.scale - 95 })
+        : _mergeExprParams(base, eyeDelta));
+      fe.eye._applySide('R', this._winkR
+        ? _mergeExprParams(base, { ...eyeDelta, scale: eyeDelta.scale - 95 })
+        : _mergeExprParams(base, eyeDelta));
+    } else {
+      fe.eye._applySide('L', this._winkL
+        ? _mergeExprParams(eyeState.left,  { ...eyeDelta, scale: eyeDelta.scale - 95 })
+        : _mergeExprParams(eyeState.left,  eyeDelta));
+      fe.eye._applySide('R', this._winkR
+        ? _mergeExprParams(eyeState.right, { ...eyeDelta, scale: eyeDelta.scale - 95 })
+        : _mergeExprParams(eyeState.right, eyeDelta));
+    }
+
+    // ── 眉へのオーバーレイ ────────────────────────────────────
+    const ebDelta = _eyebrowDeltaFromExpr(this._values);
+    const ebState = fe.eyebrow.getState();
+    if (ebState.syncLR) {
+      const merged = _mergeExprParams(ebState.both, ebDelta);
+      fe.eyebrow._applySide('L', merged);
+      fe.eyebrow._applySide('R', merged);
+    } else {
+      fe.eyebrow._applySide('L', _mergeExprParams(ebState.left,  ebDelta));
+      fe.eyebrow._applySide('R', _mergeExprParams(ebState.right, ebDelta));
+    }
+  }
+
+  resetState() {
+    this._preset = 'normal';
+    this._values = _defaultExprValues();
+    this._winkL  = false;
+    this._winkR  = false;
+    // 顔のベース状態を再適用して表情をクリア
+    this.faceEditor?.applyAll();
+  }
+
+  serialize() {
+    return {
+      preset: this._preset,
+      values: { ...this._values },
+    };
+  }
+
+  deserialize(data) {
+    if (!data) return;
+    this._preset = data.preset ?? 'normal';
+    if (data.values) Object.assign(this._values, data.values);
+    // wink フラグをプリセット定義から復元
+    const preset = EXPRESSION_PRESETS.find(p => p.id === this._preset);
+    this._winkL  = preset?.winkL ?? false;
+    this._winkR  = preset?.winkR ?? false;
   }
 }
